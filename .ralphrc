@@ -20,7 +20,7 @@ CLAUDE_OUTPUT_FORMAT="json"
 # TOOL PERMISSIONS
 # =============================================================================
 
-ALLOWED_TOOLS="Write,Read,Edit,Grep,Glob,Bash(git add *),Bash(git commit *),Bash(git diff *),Bash(git log *),Bash(git status),Bash(git status *),Bash(git push *),Bash(git checkout *),Bash(git branch *),Bash(npm *),Bash(npx *),Bash(node *),Bash(tsc *),Bash(ls *),Bash(mkdir *)"
+ALLOWED_TOOLS="Write,Read,Edit,Grep,Glob,Bash(git *),Bash(npm *),Bash(npx *),Bash(node *),Bash(tsc *),Bash(ls *),Bash(mkdir *),Bash(cat *)"
 
 # =============================================================================
 # SESSION MANAGEMENT

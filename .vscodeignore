@@ -1,0 +1,14 @@
+.ralph/
+.claude/
+.vscode/
+.git/
+.gitignore
+.ralphrc
+src/
+node_modules/
+tsconfig.json
+commands.example.json
+ralph-run.sh
+test-project/
+**/*.ts
+**/*.map

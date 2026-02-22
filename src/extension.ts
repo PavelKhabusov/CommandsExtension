@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CommandsPanel } from './webviewPanel';
 import { CommandsSidebarProvider } from './sidebarProvider';
+import { TerminalManager } from './terminalManager';
 
 export function activate(context: vscode.ExtensionContext): void {
   // Register the editor panel command
@@ -19,6 +20,9 @@ export function activate(context: vscode.ExtensionContext): void {
     sidebarProvider
   );
   context.subscriptions.push(sidebarRegistration);
+
+  // Register terminal manager disposables for cleanup
+  context.subscriptions.push(...TerminalManager.getInstance().getDisposables());
 
   // Watch for changes to commands.json and package.json
   if (vscode.workspace.workspaceFolders) {

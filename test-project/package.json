@@ -1,0 +1,9 @@
+{
+  "name": "test-project",
+  "version": "1.0.0",
+  "scripts": {
+    "hello": "echo 'Hello from npm script!'",
+    "build": "echo 'Building...' && echo 'Done!'",
+    "test": "echo 'Running tests... All passed!'"
+  }
+}

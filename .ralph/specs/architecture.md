@@ -200,6 +200,172 @@ function runCommand(cmd: CommandDefinition, workspaceRoot: string): void {
 
 ## Security
 
-- Webview CSP: `default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';`
+- Webview CSP: `default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};`
 - No eval, no inline styles from untrusted sources
 - Validate commands.json schema before rendering
+
+---
+
+## Sidebar Panel (WebviewViewProvider)
+
+The extension must also be available in the VSCode sidebar via the Activity Bar.
+
+### package.json contributions
+
+```json
+{
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "commandsExtension",
+          "title": "Commands",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "commandsExtension": [
+        {
+          "type": "webview",
+          "id": "commandsExtension.sidebarView",
+          "name": "Commands"
+        }
+      ]
+    }
+  }
+}
+```
+
+### `src/sidebarProvider.ts`
+
+```typescript
+export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
+  public static readonly viewType = 'commandsExtension.sidebarView';
+  private _view?: vscode.WebviewView;
+
+  constructor(private readonly _extensionUri: vscode.Uri) {}
+
+  public resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken
+  ): void {
+    this._view = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this._extensionUri, 'media')],
+    };
+    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    // Set up message handling (same protocol as editor panel)
+    // Load and send commands via postMessage
+  }
+
+  public refresh(): void {
+    // Send updated commands to sidebar webview via postMessage
+    // Do NOT reset webview.html — only postMessage
+  }
+}
+```
+
+### Key Architecture Rules
+- Sidebar and editor panel are INDEPENDENT — they can be open simultaneously
+- Both share the same `media/main.js`, `media/main.css`, and `commandsProvider.ts`
+- FileSystemWatcher in `extension.ts` should refresh BOTH when files change
+- The webview JS/CSS must be responsive: in narrow sidebar (width ~300px), buttons stack vertically; in wide editor panel, buttons wrap in a flex grid
+- HTML is set ONCE in `resolveWebviewView()`. Updates are done ONLY via postMessage
+
+### Activity Bar Icon
+
+Create `media/icon.svg` — a simple monochrome SVG icon (24x24). Should look clear on both dark and light themes. Suggested: a terminal prompt icon or a play-button-in-a-list icon.
+
+---
+
+## UI Design Specification
+
+### Visual Style
+The UI should feel native to VSCode — like a built-in panel, not an external app.
+
+### Layout Structure
+```
+┌──────────────────────────────────┐
+│ 🔍 [Search commands...]  [⟳] [≡]│  ← sticky toolbar
+├──────────────────────────────────┤
+│                                  │
+│ ▼ BUILD                         │  ← group header (uppercase, muted color)
+│ ┌──────────────────────────────┐│
+│ │ ▶ Build Project        [npm] ││  ← command card with type badge
+│ │   npm run build              ││  ← command subtitle (muted)
+│ ├──────────────────────────────┤│
+│ │ ▶ Watch Mode           [npm] ││
+│ │   npm run watch              ││
+│ └──────────────────────────────┘│
+│                                  │
+│ ▼ DEV                           │
+│ ┌──────────────────────────────┐│
+│ │ ▶ Start Server        [node] ││
+│ │   node server.js             ││
+│ └──────────────────────────────┘│
+│                                  │
+│ ▶ DEPLOY (collapsed)            │
+│                                  │
+│ ▼ NPM SCRIPTS                   │
+│ ┌────────┐ ┌────────┐ ┌───────┐│  ← npm scripts can be compact pills
+│ │ build  │ │ watch  │ │ test  ││
+│ └────────┘ └────────┘ └───────┘│
+│                                  │
+└──────────────────────────────────┘
+```
+
+### CSS Variables to Use
+```css
+/* Backgrounds */
+--vscode-editor-background          /* main bg */
+--vscode-sideBar-background         /* group card bg */
+--vscode-list-hoverBackground       /* button hover */
+--vscode-list-activeSelectionBackground  /* button active */
+
+/* Text */
+--vscode-editor-foreground          /* primary text */
+--vscode-descriptionForeground      /* secondary text, subtitles */
+--vscode-textLink-foreground        /* accent links */
+
+/* Borders */
+--vscode-panel-border               /* dividers */
+--vscode-widget-border              /* card borders */
+
+/* Buttons */
+--vscode-button-background          /* primary buttons */
+--vscode-button-foreground          /* button text */
+--vscode-button-secondaryBackground /* secondary buttons */
+
+/* Badges */
+--vscode-badge-background           /* type badges */
+--vscode-badge-foreground           /* badge text */
+
+/* Input */
+--vscode-input-background           /* search field bg */
+--vscode-input-foreground           /* search text */
+--vscode-input-border               /* search border */
+--vscode-input-placeholderForeground /* placeholder */
+```
+
+### Codicon Icons (built into VSCode webviews)
+Use the `codicon` font class for icons:
+- Terminal: `codicon-terminal`
+- Node.js: `codicon-symbol-event`
+- PowerShell: `codicon-terminal-powershell`
+- Run/Play: `codicon-play`
+- Refresh: `codicon-refresh`
+- Collapse all: `codicon-collapse-all`
+- Expand all: `codicon-expand-all`
+- Search: `codicon-search`
+- Group chevron: `codicon-chevron-down` / `codicon-chevron-right`
+
+To use codicons in webview, include the codicon CSS from `@vscode/codicons` OR use the toolkit.
+Simplest approach: include the codicon font-face in the webview CSP and reference via class.
+
+### Responsive Behavior
+- **Sidebar** (width < 400px): full-width stacked buttons, no flex-wrap grid
+- **Editor panel** (width >= 400px): buttons wrap in a flex grid, 2-3 per row
+- Use CSS `@media (max-width: 400px)` or container queries

@@ -7,12 +7,18 @@ body {
 	background-color: var(--vscode-editor-background);
 }
 
+/* ── Toolbar ── */
+
 #toolbar {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	padding: 8px 16px;
 	border-bottom: 1px solid var(--vscode-panel-border);
+	position: sticky;
+	top: 0;
+	background-color: var(--vscode-editor-background);
+	z-index: 10;
 }
 
 #toolbar h2 {
@@ -21,27 +27,43 @@ body {
 	font-weight: 600;
 }
 
-#refreshBtn {
+.toolbar-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.toolbar-btn {
 	background: none;
 	border: none;
 	color: var(--vscode-editor-foreground);
-	font-size: 18px;
+	font-size: 16px;
 	cursor: pointer;
-	padding: 4px 8px;
+	padding: 4px 6px;
 	border-radius: 4px;
+	line-height: 1;
 }
 
-#refreshBtn:hover {
-	background-color: var(--vscode-button-hoverBackground);
+.toolbar-btn:hover {
+	background-color: var(--vscode-list-hoverBackground);
 }
+
+/* ── Commands Container ── */
 
 #commands-container {
-	padding: 8px 16px;
+	padding: 4px 0;
 }
 
 .loading {
 	color: var(--vscode-descriptionForeground);
 	font-style: italic;
+	padding: 8px 16px;
+}
+
+.empty-message {
+	text-align: center;
+	padding: 40px 16px;
+	color: var(--vscode-descriptionForeground);
 }
 
 #empty-state {
@@ -58,36 +80,38 @@ body {
 	font-size: 12px;
 }
 
+/* ── Command Groups ── */
+
 .command-group {
-	margin-bottom: 16px;
+	margin-bottom: 4px;
 }
 
 .group-header {
 	display: flex;
 	align-items: center;
 	cursor: pointer;
-	padding: 4px 0;
+	padding: 6px 16px;
 	user-select: none;
 }
 
 .group-header:hover {
-	opacity: 0.8;
+	background-color: var(--vscode-list-hoverBackground);
 }
 
-.chevron {
+.group-chevron {
 	display: inline-block;
 	width: 16px;
 	margin-right: 4px;
-	font-size: 12px;
+	font-size: 10px;
 	transition: transform 0.15s ease;
 }
 
-.chevron.collapsed {
+.group-chevron.collapsed {
 	transform: rotate(-90deg);
 }
 
 .group-name {
-	font-size: 12px;
+	font-size: 11px;
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
@@ -96,47 +120,172 @@ body {
 
 .group-commands {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	padding: 6px 0 0 0;
+	flex-direction: column;
 }
 
 .group-commands.collapsed {
 	display: none;
 }
 
-.command-btn {
-	display: inline-flex;
+/* ── Command Item (list row) ── */
+
+.cmd-item {
+	display: flex;
 	align-items: center;
-	gap: 6px;
-	padding: 6px 12px;
-	background-color: var(--vscode-button-background);
-	color: var(--vscode-button-foreground);
+	padding: 4px 16px 4px 20px;
+	cursor: pointer;
+	border-left: 2px solid transparent;
+	gap: 8px;
+	min-height: 36px;
+}
+
+.cmd-item:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.cmd-item:active {
+	background-color: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.cmd-icon {
+	flex-shrink: 0;
+	width: 16px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	text-align: center;
+}
+
+.cmd-item:hover .cmd-icon {
+	color: var(--vscode-editor-foreground);
+}
+
+.cmd-info {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.cmd-name {
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.cmd-subtitle {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.cmd-badge {
+	flex-shrink: 0;
+	font-size: 10px;
+	padding: 1px 6px;
+	border-radius: 2px;
+	background-color: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+	text-transform: lowercase;
+}
+
+/* ── Running state ── */
+
+.cmd-item.running {
+	border-left-color: var(--vscode-progressBar-background);
+}
+
+.cmd-item.running .cmd-icon {
+	animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.4; }
+}
+
+/* ── Add Command Form ── */
+
+#add-command-form {
+	display: none;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+	background-color: var(--vscode-editor-background);
+}
+
+#add-command-form.visible {
+	display: block;
+}
+
+.form-group {
+	margin-bottom: 8px;
+}
+
+.form-group label {
+	display: block;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	margin-bottom: 3px;
+	text-transform: uppercase;
+	letter-spacing: 0.3px;
+}
+
+.form-group input,
+.form-group select {
+	width: 100%;
+	padding: 4px 8px;
+	font-size: 13px;
+	font-family: var(--vscode-font-family);
+	background-color: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 2px;
+	outline: none;
+	box-sizing: border-box;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.form-group input::placeholder {
+	color: var(--vscode-input-placeholderForeground);
+}
+
+.form-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.form-actions button {
+	padding: 4px 12px;
+	font-size: 12px;
+	font-family: var(--vscode-font-family);
 	border: none;
 	border-radius: 2px;
 	cursor: pointer;
-	font-size: 13px;
-	font-family: var(--vscode-font-family);
-	white-space: nowrap;
 }
 
-.command-btn:hover {
+.btn-primary {
+	background-color: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+}
+
+.btn-primary:hover {
 	background-color: var(--vscode-button-hoverBackground);
 }
 
-.command-btn:active {
-	opacity: 0.8;
+.btn-secondary {
+	background-color: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
 }
 
-.cmd-type {
-	font-size: 10px;
-	padding: 1px 5px;
-	border-radius: 8px;
-	background-color: var(--vscode-badge-background);
-	color: var(--vscode-badge-foreground);
-}
-
-.command-btn.running {
-	opacity: 0.7;
-	pointer-events: none;
+.btn-secondary:hover {
+	background-color: var(--vscode-button-secondaryHoverBackground);
 }

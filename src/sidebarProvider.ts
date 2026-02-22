@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { CommandDefinition } from './types';
-import { loadCommands } from './commandsProvider';
+import { loadCommands, addCommandToFile } from './commandsProvider';
+import { TerminalManager } from './terminalManager';
 
 export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'commandsExtension.sidebarView';
@@ -55,7 +55,7 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 		this._view.webview.postMessage({ type: 'updateCommands', groups });
 	}
 
-	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string }): void {
+	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string; cmdType?: string; group?: string }): void {
 		switch (message.type) {
 			case 'runCommand': {
 				if (!message.command || !message.shellType || !message.name) {
@@ -72,6 +72,24 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 				this._view?.webview.postMessage({ type: 'commandStarted', name: message.name });
 				break;
 			}
+			case 'addCommand': {
+				if (!message.name || !message.command) {
+					return;
+				}
+				const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!workspaceRoot) {
+					vscode.window.showWarningMessage('No workspace folder open. Cannot add command.');
+					return;
+				}
+				const configFile = vscode.workspace.getConfiguration('commandsExtension').get<string>('configFile', 'commands.json');
+				addCommandToFile(workspaceRoot, {
+					name: message.name,
+					command: message.command,
+					type: message.cmdType || 'terminal',
+					group: message.group || 'General',
+				}, configFile);
+				break;
+			}
 			case 'refresh':
 				this._sendCommands();
 				break;
@@ -79,27 +97,7 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 	}
 
 	private _runCommand(cmd: CommandDefinition): void {
-		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-		const terminalOptions: vscode.TerminalOptions = {
-			name: `Cmd: ${cmd.name}`,
-			cwd: cmd.cwd && workspaceRoot
-				? path.join(workspaceRoot, cmd.cwd)
-				: workspaceRoot,
-		};
-
-		if (cmd.type === 'pwsh') {
-			terminalOptions.shellPath = 'pwsh';
-		}
-
-		const terminal = vscode.window.createTerminal(terminalOptions);
-		terminal.show();
-
-		if (cmd.type === 'node') {
-			terminal.sendText(`node ${cmd.command}`);
-		} else {
-			terminal.sendText(cmd.command);
-		}
+		TerminalManager.getInstance().runCommand(cmd);
 	}
 
 	private _getHtmlForWebview(webview: vscode.Webview): string {
@@ -124,7 +122,36 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 <body>
 	<div id="toolbar">
 		<h2>Commands</h2>
-		<button id="refreshBtn" title="Refresh commands">&#x21bb;</button>
+		<div class="toolbar-actions">
+			<button id="addBtn" class="toolbar-btn" title="Add command">+</button>
+			<button id="refreshBtn" class="toolbar-btn" title="Refresh commands">&#x21bb;</button>
+		</div>
+	</div>
+	<div id="add-command-form">
+		<div class="form-group">
+			<label for="cmdNameInput">Name</label>
+			<input type="text" id="cmdNameInput" placeholder="Build Project">
+		</div>
+		<div class="form-group">
+			<label for="cmdCommandInput">Command</label>
+			<input type="text" id="cmdCommandInput" placeholder="npm run build">
+		</div>
+		<div class="form-group">
+			<label for="cmdTypeSelect">Type</label>
+			<select id="cmdTypeSelect">
+				<option value="terminal">terminal</option>
+				<option value="node">node</option>
+				<option value="pwsh">pwsh</option>
+			</select>
+		</div>
+		<div class="form-group">
+			<label for="cmdGroupInput">Group</label>
+			<input type="text" id="cmdGroupInput" placeholder="General">
+		</div>
+		<div class="form-actions">
+			<button id="saveCommandBtn" class="btn-primary">Save</button>
+			<button id="cancelCommandBtn" class="btn-secondary">Cancel</button>
+		</div>
 	</div>
 	<div id="commands-container">
 		<p class="loading">Loading commands...</p>

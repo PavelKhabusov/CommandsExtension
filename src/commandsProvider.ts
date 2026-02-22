@@ -109,3 +109,34 @@ export async function loadCommands(workspaceRoot: string, configFileName: string
   const allCommands = [...commandsFromJson, ...commandsFromPackage];
   return groupCommands(allCommands);
 }
+
+export async function addCommandToFile(
+  workspaceRoot: string,
+  newCommand: { name: string; command: string; type: string; group: string },
+  configFileName: string = 'commands.json'
+): Promise<void> {
+  const filePath = path.join(workspaceRoot, configFileName);
+
+  let data: CommandsJsonSchema = { commands: [] };
+
+  if (fs.existsSync(filePath)) {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      data = JSON.parse(raw);
+      if (!Array.isArray(data.commands)) {
+        data.commands = [];
+      }
+    } catch {
+      data = { commands: [] };
+    }
+  }
+
+  data.commands.push({
+    name: newCommand.name,
+    command: newCommand.command,
+    type: newCommand.type as 'terminal' | 'pwsh' | 'node',
+    group: newCommand.group || 'General',
+  });
+
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+}

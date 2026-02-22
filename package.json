@@ -3,13 +3,22 @@
   "displayName": "Commands Extension",
   "description": "Auto-interface for running project commands (node, pwsh, shell) from a Webview panel",
   "version": "0.0.1",
-  "publisher": "pavel",
+  "publisher": "PavelKhabusov",
   "engines": {
     "vscode": "^1.85.0"
   },
+  "icon": "media/icon.png",
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "commands",
+    "terminal",
+    "runner",
+    "scripts",
+    "tasks"
+  ],
+  "license": "MIT",
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
@@ -52,6 +61,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
+    "package": "npm run compile && vsce package --allow-missing-repository",
+    "publish": "npm run compile && vsce publish --allow-missing-repository",
+    "install-local": "npm run package && code --install-extension commands-extension-*.vsix",
     "gitpush": "git push origin HEAD"
   },
   "devDependencies": {
