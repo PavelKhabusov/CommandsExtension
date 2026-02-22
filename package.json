@@ -62,13 +62,14 @@
     }
   },
   "scripts": {
+    "version": "sed -i '' \"s/version-[0-9]*\\.[0-9]*\\.[0-9]*/version-$(node -p \"require('./package.json').version\")/\" README.md && git add README.md",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "package": "rm -f commands-extension-*.vsix && npm run compile && vsce package --allow-missing-repository",
     "install-local": "npm run package && code --install-extension commands-extension-*.vsix",
     "gitpush": "git push origin HEAD",
-    "update": "npm version patch && npm run package"
+    "update": "git add -A && git commit -m 'pre-release changes' && npm version patch && git push && git push --tags && npm run package"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

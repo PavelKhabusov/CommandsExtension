@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import { CommandDefinition, CommandGroup } from './types';
 
 interface CommandsJsonSchema {
@@ -16,31 +17,48 @@ interface PackageJsonSchema {
   scripts?: Record<string, string>;
 }
 
+function hasTrailingCommas(json: string): boolean {
+  return /,\s*[\]}]/g.test(json);
+}
+
+function stripTrailingCommas(json: string): string {
+  return json.replace(/,\s*([\]}])/g, '$1');
+}
+
+function safeParseJson<T>(raw: string, filePath: string): T | null {
+  if (hasTrailingCommas(raw)) {
+    vscode.window.showWarningMessage(`Commands Extension: trailing comma in ${path.basename(filePath)}`);
+    raw = stripTrailingCommas(raw);
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch (e) {
+    vscode.window.showWarningMessage(`Commands Extension: invalid JSON in ${path.basename(filePath)}: ${e instanceof Error ? e.message : e}`);
+    return null;
+  }
+}
+
 function loadFromCommandsJson(filePath: string): CommandDefinition[] {
   if (!fs.existsSync(filePath)) {
     return [];
   }
 
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const parsed: CommandsJsonSchema = JSON.parse(raw);
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const parsed = safeParseJson<CommandsJsonSchema>(raw, filePath);
 
-    if (!parsed.commands || !Array.isArray(parsed.commands)) {
-      return [];
-    }
-
-    return parsed.commands
-      .filter(cmd => cmd.name && cmd.command && cmd.type)
-      .map(cmd => ({
-        name: cmd.name,
-        command: cmd.command,
-        type: cmd.type,
-        group: cmd.group || 'General',
-        cwd: cmd.cwd,
-      }));
-  } catch {
+  if (!parsed || !parsed.commands || !Array.isArray(parsed.commands)) {
     return [];
   }
+
+  return parsed.commands
+    .filter(cmd => cmd.name && cmd.command && cmd.type)
+    .map(cmd => ({
+      name: cmd.name,
+      command: cmd.command,
+      type: cmd.type,
+      group: cmd.group || 'General',
+      cwd: cmd.cwd,
+    }));
 }
 
 function loadFromPackageJson(filePath: string): CommandDefinition[] {
@@ -48,23 +66,19 @@ function loadFromPackageJson(filePath: string): CommandDefinition[] {
     return [];
   }
 
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const parsed: PackageJsonSchema = JSON.parse(raw);
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const parsed = safeParseJson<PackageJsonSchema>(raw, filePath);
 
-    if (!parsed.scripts || typeof parsed.scripts !== 'object') {
-      return [];
-    }
-
-    return Object.keys(parsed.scripts).map(scriptName => ({
-      name: scriptName,
-      command: `npm run ${scriptName}`,
-      type: 'terminal' as const,
-      group: 'npm scripts',
-    }));
-  } catch {
+  if (!parsed || !parsed.scripts || typeof parsed.scripts !== 'object') {
     return [];
   }
+
+  return Object.keys(parsed.scripts).map(scriptName => ({
+    name: scriptName,
+    command: `npm run ${scriptName}`,
+    type: 'terminal' as const,
+    group: 'npm scripts',
+  }));
 }
 
 function groupCommands(commands: CommandDefinition[]): CommandGroup[] {

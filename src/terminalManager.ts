@@ -70,6 +70,13 @@ export class TerminalManager {
 		return vscode.window.terminals.includes(terminal);
 	}
 
+	public disposeAll(): void {
+		for (const terminal of this._terminals.values()) {
+			terminal.dispose();
+		}
+		this._terminals.clear();
+	}
+
 	public getDisposables(): vscode.Disposable[] {
 		return this._disposables;
 	}

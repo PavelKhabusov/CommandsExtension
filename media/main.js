@@ -9,6 +9,14 @@
 	const addBtn = document.getElementById('addBtn');
 	const addForm = document.getElementById('add-command-form');
 
+	const clearBtn = document.getElementById('clearBtn');
+
+	if (clearBtn) {
+		clearBtn.addEventListener('click', () => {
+			vscode.postMessage({ type: 'clearTerminals' });
+		});
+	}
+
 	if (refreshBtn) {
 		refreshBtn.addEventListener('click', () => {
 			vscode.postMessage({ type: 'refresh' });
