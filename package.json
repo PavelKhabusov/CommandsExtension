@@ -65,7 +65,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
-    "package": "npm run compile && vsce package --allow-missing-repository",
+    "package": "rm -f commands-extension-*.vsix && npm run compile && vsce package --allow-missing-repository",
     "install-local": "npm run package && code --install-extension commands-extension-*.vsix",
     "gitpush": "git push origin HEAD",
     "update": "npm version patch && npm run package"
