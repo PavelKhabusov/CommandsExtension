@@ -18,6 +18,10 @@
     "scripts",
     "tasks"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PavelKhabusov/CommandsExtension"
+  },
   "license": "MIT",
   "activationEvents": [],
   "main": "./out/extension.js",
