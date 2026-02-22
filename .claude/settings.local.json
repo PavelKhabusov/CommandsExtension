@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx expo export:*)",
+      "Bash(npx expo install:*)",
+      "Bash(npm install:*)",
+      "Bash(ls:*)",
+      "Bash(xargs -I {} sh -c 'echo \"\"=== {} ===\"\" && cat {}')",
+      "Bash(grep:*)",
+      "Bash(docker ps:*)",
+      "Bash(npm run db:push:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(node:*)",
+      "Bash(npx tsc:*)",
+      "Bash(curl:*)",
+      "Bash(npx turbo:*)",
+      "Bash(docker exec:*)"
+    ]
+  }
+}

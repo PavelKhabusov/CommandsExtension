@@ -1,0 +1,43 @@
+{
+  "name": "commands-extension",
+  "displayName": "Commands Extension",
+  "description": "Auto-interface for running project commands (node, pwsh, shell) from a Webview panel",
+  "version": "0.0.1",
+  "publisher": "pavel",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "commandsExtension.openPanel",
+        "title": "Commands: Open Panel"
+      }
+    ],
+    "configuration": {
+      "title": "Commands Extension",
+      "properties": {
+        "commandsExtension.configFile": {
+          "type": "string",
+          "default": "commands.json",
+          "description": "Path to commands configuration file (relative to workspace root)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
