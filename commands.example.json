@@ -1,0 +1,41 @@
+{
+  "commands": [
+    {
+      "name": "Build Project",
+      "command": "npm run build",
+      "type": "terminal",
+      "group": "Build"
+    },
+    {
+      "name": "Watch Mode",
+      "command": "npm run watch",
+      "type": "terminal",
+      "group": "Build"
+    },
+    {
+      "name": "Run Tests",
+      "command": "npm test",
+      "type": "terminal",
+      "group": "Test"
+    },
+    {
+      "name": "Deploy Script",
+      "command": "./scripts/deploy.ps1",
+      "type": "pwsh",
+      "group": "Deploy"
+    },
+    {
+      "name": "Start Server",
+      "command": "server.js",
+      "type": "node",
+      "group": "Dev"
+    },
+    {
+      "name": "Start Frontend",
+      "command": "npm start",
+      "type": "terminal",
+      "group": "Dev",
+      "cwd": "./frontend"
+    }
+  ]
+}
