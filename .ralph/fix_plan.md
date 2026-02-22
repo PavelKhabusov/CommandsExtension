@@ -114,6 +114,54 @@ Users should be able to add new commands to `commands.json` directly from the we
 
 - [x] Project initialization (git, .gitignore, directories)
 
+## NEW FEATURE: Command Marketplace (встроенные шаблоны команд)
+
+### Requirement
+Внутри расширения нужен раздел «Marketplace» — аккордион-секция (по аналогии с «Рекомендуемые» в поиске расширений VSCode), содержащая готовые шаблоны/заготовки команд. Это позволит пользователям в новых проектах быстро добавлять целый стек нужных команд, а не создавать их вручную по одной.
+
+### Что должно быть:
+1. **Аккордион «Marketplace»** в sidebar/webview — сворачиваемая секция под основными командами
+2. **Группы шаблонов** (например: «React», «Node.js Backend», «Docker», «Testing», «Git Hooks», «Linting») — каждая группа содержит набор связанных команд
+3. **Отдельные команды-шаблоны** вне групп — универсальные полезные команды
+4. **При наведении (hover) на группу** — показывать tooltip/popup со списком всех команд группы
+5. **Счётчик команд** — в шапке каждой группы справа отображать badge с количеством команд в группе (например: `React (5)`)
+6. **Кнопка «Добавить»** — у каждой группы и отдельной команды, добавляет все команды группы (или одну команду) в `commands.json` проекта
+7. **Встроенные шаблоны** — захардкоженный набор полезных шаблонов в коде расширения (можно потом расширить через remote-источник)
+
+### Implementation Plan
+
+- [x] Создать `src/marketplace.ts` — модуль с данными шаблонов:
+  - Интерфейс `TemplateGroup { id, name, description, icon, commands: CommandDefinition[] }`
+  - Захардкоженный массив шаблонных групп (React, Node.js, Docker, Testing, Linting, Git Hooks)
+  - Функция `getMarketplaceTemplates()` возвращающая все доступные шаблоны
+
+- [x] Обновить `media/main.js` — рендеринг секции Marketplace:
+  - Аккордион-секция «Marketplace» внизу списка команд
+  - Каждая группа — сворачиваемый элемент со значком, названием, описанием и badge-счётчиком команд справа
+  - Кнопка «+» у группы (добавить все) и у каждой отдельной команды
+  - При клике отправка `addTemplateGroup` / `addTemplateCommand` в extension
+
+- [x] Обновить `media/main.css` — стили для Marketplace:
+  - Секция-аккордион с collapsible header
+  - Badge-счётчик: `--vscode-badge-background` / `--vscode-badge-foreground`
+  - Кнопка «+» появляется при hover
+  - Визуальное разделение между основными командами и Marketplace
+
+- [x] Обновить `src/sidebarProvider.ts` и `src/webviewPanel.ts`:
+  - Передача шаблонов через `{ type: 'updateMarketplace', templates }`
+  - Обработка `addTemplateGroup` и `addTemplateCommand` с вызовом `addCommandToFile()`
+  - Уведомление об успешном добавлении
+
+- [x] Наполнить начальный набор шаблонов:
+  - **React**: Dev Server, Build, Test, Lint, Format
+  - **Node.js Backend**: Start, Dev, Build, Test, DB Migrate
+  - **Docker**: Docker Build, Docker Up, Docker Down, Docker Logs
+  - **Testing**: Test, Test Watch, Test Coverage
+  - **Linting & Formatting**: Lint, Lint Fix, Format, Typecheck
+  - **Git Hooks**: Prepare, Pre-commit, Pre-push
+
+---
+
 ## Notes
 - Use VSCode API idioms: Disposable pattern, configuration API
 - Webview must use nonce-based CSP for security

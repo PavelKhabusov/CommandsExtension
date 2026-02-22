@@ -1,10 +1,10 @@
 {
-    "timestamp": "2026-02-22T15:57:19+00:00",
-    "loop_count": 3,
-    "calls_made_this_hour": 5,
+    "timestamp": "2026-02-22T17:26:51+00:00",
+    "loop_count": 2,
+    "calls_made_this_hour": 1,
     "max_calls_per_hour": 100,
-    "last_action": "graceful_exit",
-    "status": "completed",
-    "exit_reason": "plan_complete",
-    "next_reset": "19:57:19"
+    "last_action": "permission_denied",
+    "status": "halted",
+    "exit_reason": "permission_denied",
+    "next_reset": "21:26:51"
 }

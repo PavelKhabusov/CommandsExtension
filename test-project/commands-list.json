@@ -1,0 +1,82 @@
+{
+  "commands": [
+    {
+      "name": "List Files",
+      "command": "ls -la",
+      "type": "terminal",
+      "group": "Shell"
+    },
+    {
+      "name": "Show Date",
+      "command": "date",
+      "type": "terminal",
+      "group": "Shell"
+    },
+    {
+      "name": "Node Version",
+      "command": "-v",
+      "type": "node",
+      "group": "Info"
+    },
+    {
+      "name": "PWsh Test",
+      "command": "Write-Host 'Hello from PowerShell!'",
+      "type": "pwsh",
+      "group": "PowerShell"
+    },
+    {
+      "name": "Git Push",
+      "command": "git push origin HEAD",
+      "type": "terminal",
+      "group": "General"
+    },
+    {
+      "name": "Status",
+      "command": "git status",
+      "type": "terminal",
+      "group": "Git"
+    },
+    {
+      "name": "Pull",
+      "command": "git pull",
+      "type": "terminal",
+      "group": "Git"
+    },
+    {
+      "name": "Push",
+      "command": "git push",
+      "type": "terminal",
+      "group": "Git"
+    },
+    {
+      "name": "Push (set upstream)",
+      "command": "git push -u origin HEAD",
+      "type": "terminal",
+      "group": "Git"
+    },
+    {
+      "name": "Commit all",
+      "command": "git add -A && git commit",
+      "type": "terminal",
+      "group": "Git"
+    },
+    {
+      "name": "Log (oneline)",
+      "command": "git log --oneline -20",
+      "type": "terminal",
+      "group": "Git"
+    },
+    {
+      "name": "Stash",
+      "command": "git stash",
+      "type": "terminal",
+      "group": "Git"
+    },
+    {
+      "name": "Stash Pop",
+      "command": "git stash pop",
+      "type": "terminal",
+      "group": "Git"
+    }
+  ]
+}

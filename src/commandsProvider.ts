@@ -73,11 +73,12 @@ function loadFromPackageJson(filePath: string): CommandDefinition[] {
     return [];
   }
 
-  return Object.keys(parsed.scripts).map(scriptName => ({
+  return Object.entries(parsed.scripts).map(([scriptName, scriptValue]) => ({
     name: scriptName,
     command: `npm run ${scriptName}`,
     type: 'terminal' as const,
     group: 'npm scripts',
+    detail: scriptValue,
   }));
 }
 
@@ -95,13 +96,13 @@ function groupCommands(commands: CommandDefinition[]): CommandGroup[] {
 
   const groups: CommandGroup[] = [];
   const npmScriptsGroup: CommandGroup | undefined = groupMap.has('npm scripts')
-    ? { name: 'npm scripts', commands: groupMap.get('npm scripts')! }
+    ? { name: 'npm scripts', commands: groupMap.get('npm scripts')!, source: 'package.json' }
     : undefined;
 
   // User-defined groups first (sorted alphabetically), then npm scripts
   for (const [name, commands] of groupMap) {
     if (name !== 'npm scripts') {
-      groups.push({ name, commands });
+      groups.push({ name, commands, source: 'commands-list.json' });
     }
   }
   groups.sort((a, b) => a.name.localeCompare(b.name));
@@ -113,7 +114,7 @@ function groupCommands(commands: CommandDefinition[]): CommandGroup[] {
   return groups;
 }
 
-export async function loadCommands(workspaceRoot: string, configFileName: string = 'commands.json'): Promise<CommandGroup[]> {
+export async function loadCommands(workspaceRoot: string, configFileName: string = 'commands-list.json'): Promise<CommandGroup[]> {
   const commandsJsonPath = path.join(workspaceRoot, configFileName);
   const packageJsonPath = path.join(workspaceRoot, 'package.json');
 
@@ -127,7 +128,7 @@ export async function loadCommands(workspaceRoot: string, configFileName: string
 export async function addCommandToFile(
   workspaceRoot: string,
   newCommand: { name: string; command: string; type: string; group: string },
-  configFileName: string = 'commands.json'
+  configFileName: string = 'commands-list.json'
 ): Promise<void> {
   const filePath = path.join(workspaceRoot, configFileName);
 
@@ -145,12 +146,52 @@ export async function addCommandToFile(
     }
   }
 
+  const group = newCommand.group || 'General';
+  const exists = data.commands.some(
+    cmd => cmd.name === newCommand.name && (cmd.group || 'General') === group
+  );
+  if (exists) {
+    return;
+  }
+
   data.commands.push({
     name: newCommand.name,
     command: newCommand.command,
     type: newCommand.type as 'terminal' | 'pwsh' | 'node',
-    group: newCommand.group || 'General',
+    group,
   });
 
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+export async function removeGroupFromFile(
+  workspaceRoot: string,
+  groupName: string,
+  configFileName: string = 'commands-list.json'
+): Promise<number> {
+  const filePath = path.join(workspaceRoot, configFileName);
+
+  if (!fs.existsSync(filePath)) {
+    return 0;
+  }
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const data: CommandsJsonSchema = JSON.parse(raw);
+    if (!Array.isArray(data.commands)) {
+      return 0;
+    }
+
+    const before = data.commands.length;
+    data.commands = data.commands.filter(cmd => (cmd.group || 'General') !== groupName);
+    const removed = before - data.commands.length;
+
+    if (removed > 0) {
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    }
+
+    return removed;
+  } catch {
+    return 0;
+  }
 }

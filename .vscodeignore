@@ -7,7 +7,7 @@
 src/
 node_modules/
 tsconfig.json
-commands.example.json
+commands-list.example.json
 ralph-run.sh
 test-project/
 **/*.ts

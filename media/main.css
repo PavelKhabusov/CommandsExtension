@@ -1,10 +1,57 @@
-body {
-	padding: 0;
+html, body {
+	height: 100%;
 	margin: 0;
+	padding: 0;
+	overflow: hidden;
+}
+
+body {
+	display: flex;
+	flex-direction: column;
 	font-family: var(--vscode-font-family);
 	font-size: var(--vscode-font-size);
 	color: var(--vscode-editor-foreground);
 	background-color: var(--vscode-editor-background);
+}
+
+#main-content {
+	flex: 1;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+/* ── Marketplace Wrapper (bottom panel) ── */
+
+#marketplace-wrapper {
+	flex-shrink: 0;
+	height: 20vh;
+	min-height: 15vh;
+	max-height: 80vh;
+	overflow-y: auto;
+	border-top: 1px solid var(--vscode-panel-border);
+}
+
+#marketplace-wrapper.collapsed {
+	height: auto;
+	min-height: auto;
+}
+
+#marketplace-wrapper:empty {
+	display: none;
+}
+
+.marketplace-resize-handle {
+	height: 4px;
+	cursor: ns-resize;
+	background: transparent;
+	position: sticky;
+	top: 0;
+	z-index: 11;
+}
+
+.marketplace-resize-handle:hover,
+.marketplace-resize-handle.active {
+	background-color: var(--vscode-focusBorder);
 }
 
 /* ── Toolbar ── */
@@ -13,7 +60,7 @@ body {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 8px 16px;
+	padding: 6px 10px;
 	border-bottom: 1px solid var(--vscode-panel-border);
 	position: sticky;
 	top: 0;
@@ -89,14 +136,14 @@ body {
 /* ── Command Groups ── */
 
 .command-group {
-	margin-bottom: 4px;
+	margin-bottom: 2px;
 }
 
 .group-header {
 	display: flex;
 	align-items: center;
 	cursor: pointer;
-	padding: 6px 16px;
+	padding: 3px 10px;
 	user-select: none;
 }
 
@@ -105,8 +152,11 @@ body {
 }
 
 .group-chevron {
-	display: inline-block;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	width: 16px;
+	height: 16px;
 	margin-right: 4px;
 	font-size: 10px;
 	transition: transform 0.15s ease;
@@ -117,11 +167,35 @@ body {
 }
 
 .group-name {
+	flex: 1;
 	font-size: 11px;
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 	color: var(--vscode-descriptionForeground);
+}
+
+.group-delete-btn {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.1s;
+	line-height: 1;
+}
+
+.group-header:hover .group-delete-btn {
+	opacity: 1;
+}
+
+.group-delete-btn:hover {
+	background-color: var(--vscode-list-hoverBackground);
+	color: var(--vscode-errorForeground);
 }
 
 .group-commands {
@@ -138,11 +212,12 @@ body {
 .cmd-item {
 	display: flex;
 	align-items: center;
-	padding: 4px 16px 4px 20px;
+	padding: 2px 10px 2px 14px;
 	cursor: pointer;
 	border-left: 2px solid transparent;
-	gap: 8px;
-	min-height: 36px;
+	gap: 6px;
+	min-height: 30px;
+	position: relative;
 }
 
 .cmd-item:hover {
@@ -197,6 +272,30 @@ body {
 	background-color: var(--vscode-badge-background);
 	color: var(--vscode-badge-foreground);
 	text-transform: lowercase;
+}
+
+/* ── Command Tooltip ── */
+
+.cmd-tooltip {
+	display: none;
+	position: fixed;
+	z-index: 100;
+	max-width: 360px;
+	padding: 4px 8px;
+	background-color: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+	border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-panel-border));
+	border-radius: 4px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+	pointer-events: none;
+	font-size: 12px;
+	font-family: var(--vscode-editor-font-family);
+	color: var(--vscode-editor-foreground);
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+.cmd-tooltip.visible {
+	display: block;
 }
 
 /* ── Running state ── */
@@ -294,4 +393,286 @@ body {
 
 .btn-secondary:hover {
 	background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* ── Marketplace Section ── */
+
+.marketplace-section {
+	margin: 0;
+	padding: 0;
+}
+
+.marketplace-header {
+	display: flex;
+	align-items: center;
+	cursor: pointer;
+	padding: 4px 10px;
+	user-select: none;
+	position: sticky;
+	top: 0;
+	background-color: var(--vscode-editor-background);
+	z-index: 10;
+}
+
+.marketplace-header:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.marketplace-chevron {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	margin-right: 4px;
+	font-size: 10px;
+	transition: transform 0.15s ease;
+}
+
+.marketplace-chevron.collapsed {
+	transform: rotate(-90deg);
+}
+
+.marketplace-title {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.marketplace-body {
+	display: flex;
+	flex-direction: column;
+}
+
+.marketplace-body.collapsed {
+	display: none;
+}
+
+/* ── Template Group ── */
+
+.tpl-group {
+	margin-bottom: 2px;
+}
+
+.tpl-group-header {
+	display: flex;
+	align-items: center;
+	padding: 2px 10px 2px 14px;
+	cursor: pointer;
+	gap: 6px;
+	min-height: 28px;
+	position: relative;
+}
+
+.tpl-group-header:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.tpl-group-icon {
+	flex-shrink: 0;
+	width: 16px;
+	text-align: center;
+	font-size: 12px;
+}
+
+.tpl-group-info {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.tpl-group-name {
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.tpl-group-desc {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.tpl-group-badge {
+	flex-shrink: 0;
+	font-size: 10px;
+	padding: 1px 6px;
+	border-radius: 2px;
+	background-color: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+}
+
+.tpl-group-add {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: var(--vscode-editor-foreground);
+	font-size: 14px;
+	cursor: pointer;
+	padding: 2px 6px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.tpl-group-header:hover .tpl-group-add {
+	opacity: 1;
+}
+
+.tpl-group-add:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+/* ── Hover Tooltip ── */
+
+.tpl-tooltip {
+	display: none;
+	position: fixed;
+	z-index: 100;
+	min-width: 220px;
+	max-width: 360px;
+	padding: 6px 0;
+	background-color: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+	border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-panel-border));
+	border-radius: 4px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+	pointer-events: none;
+}
+
+.tpl-tooltip.visible {
+	display: block;
+}
+
+.tpl-tooltip-row {
+	display: flex;
+	align-items: center;
+	padding: 3px 10px;
+	gap: 10px;
+}
+
+.tpl-tooltip-name {
+	font-size: 12px;
+	color: var(--vscode-editor-foreground);
+	white-space: nowrap;
+}
+
+.tpl-tooltip-cmd {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	font-family: var(--vscode-editor-font-family);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	opacity: 0.7;
+}
+
+/* ── Template Group Commands (expandable) ── */
+
+.tpl-group-commands {
+	display: none;
+	flex-direction: column;
+}
+
+.tpl-group-commands.expanded {
+	display: flex;
+}
+
+.tpl-cmd-item {
+	display: flex;
+	align-items: center;
+	padding: 2px 10px 2px 34px;
+	gap: 6px;
+	min-height: 24px;
+}
+
+.tpl-cmd-item:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.tpl-cmd-name {
+	flex: 1;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.tpl-cmd-command {
+	flex-shrink: 0;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.7;
+	font-family: var(--vscode-editor-font-family);
+}
+
+.tpl-cmd-add {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: var(--vscode-editor-foreground);
+	font-size: 12px;
+	cursor: pointer;
+	padding: 1px 4px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.tpl-cmd-item:hover .tpl-cmd-add {
+	opacity: 1;
+}
+
+.tpl-cmd-add:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+/* ── Favorite Star Button ── */
+
+.cmd-fav-btn {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	font-size: 14px;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.1s;
+	line-height: 1;
+}
+
+.cmd-item:hover .cmd-fav-btn {
+	opacity: 1;
+}
+
+.cmd-fav-btn.favorited {
+	opacity: 1;
+	color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.cmd-fav-btn:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+/* ── Favorites Group ── */
+
+.favorites-group {
+	border-bottom: 1px solid var(--vscode-panel-border);
+	margin-bottom: 2px;
+}
+
+.favorites-star-icon {
+	color: var(--vscode-editorWarning-foreground, #cca700);
+	font-size: 14px;
+	text-transform: none;
+	letter-spacing: 0;
 }

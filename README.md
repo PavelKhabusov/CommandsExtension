@@ -4,7 +4,7 @@
 [![Marketplace](https://img.shields.io/visual-studio-marketplace/v/PavelKhabusov.commands-extension?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A VSCode extension that gives your project a visual command dashboard. Define commands in a `commands.json` file or let the extension auto-import your `package.json` scripts — then run them with a single click from the sidebar or a dedicated panel.
+A VSCode extension that gives your project a visual command dashboard. Define commands in a `commands-list.json` file or let the extension auto-import your `package.json` scripts — then run them with a single click from the sidebar or a dedicated panel.
 
 ## Install
 
@@ -26,18 +26,18 @@ code --install-extension PavelKhabusov.commands-extension
 - **Grouped commands** — Organize commands into collapsible groups
 - **Add commands from UI** — Click `+` to add new commands directly without editing JSON
 - **Terminal reuse** — Re-running a command reuses its existing terminal instead of creating a new one
-- **Auto-refresh** — File watcher detects changes to `commands.json` and `package.json` and updates the UI
+- **Auto-refresh** — File watcher detects changes to `commands-list.json` and `package.json` and updates the UI
 - **Theme-aware** — Uses VSCode CSS variables for a native look in any theme (light, dark, high contrast)
 
 ## Getting Started
 
 1. Open a workspace folder in VSCode
-2. Create a `commands.json` file in the workspace root (see format below)
+2. Create a `commands-list.json` file in the workspace root (see format below)
 3. Open the Commands sidebar from the Activity Bar — your commands appear automatically
 
 Scripts from `package.json` are also imported automatically under the "npm scripts" group.
 
-## commands.json Format
+## commands-list.json Format
 
 ```json
 {
@@ -102,7 +102,7 @@ These appear as `npm run build`, `npm run test`, `npm run start` in the UI.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `commandsExtension.configFile` | `commands.json` | Path to commands config file (relative to workspace root) |
+| `commandsExtension.configFile` | `commands-list.json` | Path to commands config file (relative to workspace root) |
 
 ## Requirements
 
