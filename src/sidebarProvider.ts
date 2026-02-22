@@ -27,11 +27,6 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 		webviewView.webview.onDidReceiveMessage((message) => {
 			this._handleMessage(message);
 		});
-
-		// Send initial commands after a short delay for the webview to initialize
-		setTimeout(() => {
-			this._sendCommands();
-		}, 100);
 	}
 
 	public async refresh(): Promise<void> {
@@ -57,6 +52,9 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 
 	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string; cmdType?: string; group?: string }): void {
 		switch (message.type) {
+			case 'ready':
+				this._sendCommands();
+				break;
 			case 'runCommand': {
 				if (!message.command || !message.shellType || !message.name) {
 					return;

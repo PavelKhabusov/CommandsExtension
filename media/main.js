@@ -187,5 +187,6 @@
 		return div.innerHTML;
 	}
 
-	// Initial data is sent by the extension after setting HTML — no need to request it
+	// Signal to extension that webview JS is ready to receive messages
+	vscode.postMessage({ type: 'ready' });
 })();

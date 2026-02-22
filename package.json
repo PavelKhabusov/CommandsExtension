@@ -2,7 +2,7 @@
   "name": "commands-extension",
   "displayName": "Commands Extension",
   "description": "Auto-interface for running project commands (node, pwsh, shell) from a Webview panel",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "PavelKhabusov",
   "engines": {
     "vscode": "^1.85.0"
@@ -33,7 +33,7 @@
         {
           "id": "commandsExtension",
           "title": "Commands",
-          "icon": "media/icon.svg"
+          "icon": "media/sidebar-icon.svg"
         }
       ]
     },
@@ -64,7 +64,8 @@
     "package": "npm run compile && vsce package --allow-missing-repository",
     "publish": "npm run compile && vsce publish --allow-missing-repository",
     "install-local": "npm run package && code --install-extension commands-extension-*.vsix",
-    "gitpush": "git push origin HEAD"
+    "gitpush": "git push origin HEAD",
+    "update": "npm version patch && npm run publish"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

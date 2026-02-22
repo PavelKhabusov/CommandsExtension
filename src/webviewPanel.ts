@@ -78,13 +78,10 @@ export class CommandsPanel {
 
 		if (!this._htmlSet) {
 			// Set HTML only once on first creation
+			// The webview JS will send a 'ready' message when initialized,
+			// which triggers _sendInitialCommands via the message handler
 			this._panel.webview.html = this._getHtmlForWebview();
 			this._htmlSet = true;
-
-			// Small delay to ensure the webview script has initialized
-			setTimeout(() => {
-				this._panel.webview.postMessage({ type: 'updateCommands', groups });
-			}, 100);
 		} else {
 			// Subsequent updates: only send data via postMessage
 			this._panel.webview.postMessage({ type: 'updateCommands', groups });
@@ -93,6 +90,9 @@ export class CommandsPanel {
 
 	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string; cmdType?: string; group?: string }): void {
 		switch (message.type) {
+			case 'ready':
+				this._update();
+				break;
 			case 'runCommand': {
 				if (!message.command || !message.shellType || !message.name) {
 					return;
