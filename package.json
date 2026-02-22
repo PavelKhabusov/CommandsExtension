@@ -66,10 +66,9 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "package": "npm run compile && vsce package --allow-missing-repository",
-    "publish": "npm run compile && vsce publish --allow-missing-repository",
     "install-local": "npm run package && code --install-extension commands-extension-*.vsix",
     "gitpush": "git push origin HEAD",
-    "update": "npm version patch && npm run publish"
+    "update": "npm version patch && npm run package"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
