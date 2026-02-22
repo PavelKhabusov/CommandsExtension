@@ -110,4 +110,4 @@ These appear as `npm run build`, `npm run test`, `npm run start` in the UI.
 
 ## License
 
-[MIT](LICENSE)
+MIT
