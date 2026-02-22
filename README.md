@@ -36,6 +36,10 @@ Organize commands into named groups. Collapse/expand individual groups or all at
 
 Star any command to pin it to the **Favorites** group at the top. Favorites persist across sessions.
 
+### Move Commands Between Groups
+
+Right-click any custom command to move it to a different group. The context menu shows all available custom groups. Works only for commands defined in `commands-list.json` (npm scripts stay in their group).
+
 ### Multiple Shell Types
 
 | Type | Runs as |

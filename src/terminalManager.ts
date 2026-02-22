@@ -71,10 +71,18 @@ export class TerminalManager {
 	}
 
 	public disposeAll(): void {
+		// Close all tracked terminals
 		for (const terminal of this._terminals.values()) {
 			terminal.dispose();
 		}
 		this._terminals.clear();
+
+		// Also close any orphaned terminals created by this extension
+		for (const terminal of vscode.window.terminals) {
+			if (terminal.name.startsWith('Cmd: ')) {
+				terminal.dispose();
+			}
+		}
 	}
 
 	public getDisposables(): vscode.Disposable[] {

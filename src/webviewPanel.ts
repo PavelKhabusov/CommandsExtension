@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CommandDefinition } from './types';
-import { loadCommands, addCommandToFile, removeGroupFromFile } from './commandsProvider';
+import { loadCommands, addCommandToFile, moveCommandInFile, removeGroupFromFile } from './commandsProvider';
 import { getMarketplaceTemplates } from './marketplace';
 import { TerminalManager } from './terminalManager';
 
@@ -95,7 +95,7 @@ export class CommandsPanel {
 		}
 	}
 
-	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string; cmdType?: string; group?: string; groupId?: string; commandName?: string; commandKey?: string }): void {
+	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string; cmdType?: string; group?: string; groupId?: string; commandName?: string; commandKey?: string; sourceGroup?: string; targetGroup?: string }): void {
 		switch (message.type) {
 			case 'ready':
 				this._update();
@@ -156,6 +156,17 @@ export class CommandsPanel {
 				this._addTemplateCommand(message.groupId, message.commandName);
 				break;
 			}
+			case 'moveCommand': {
+				if (!message.commandName || !message.sourceGroup || !message.targetGroup) return;
+				const moveRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!moveRoot) {
+					vscode.window.showWarningMessage('No workspace folder open.');
+					return;
+				}
+				const moveConfig = vscode.workspace.getConfiguration('commandsExtension').get<string>('configFile', 'commands-list.json');
+				moveCommandInFile(moveRoot, message.commandName, message.sourceGroup, message.targetGroup, moveConfig);
+				break;
+			}
 			case 'deleteGroup': {
 				if (!message.group) return;
 				this._deleteGroup(message.group);
@@ -189,7 +200,7 @@ export class CommandsPanel {
 				group: cmd.group,
 			}, configFile);
 		}
-		vscode.window.showInformationMessage(`Added ${group.commands.length} commands from "${group.name}"`);
+		showTimedInfo(`Added ${group.commands.length} commands from "${group.name}"`);
 	}
 
 	private async _addTemplateCommand(groupId: string, commandName: string): Promise<void> {
@@ -212,7 +223,7 @@ export class CommandsPanel {
 			type: cmd.type,
 			group: cmd.group,
 		}, configFile);
-		vscode.window.showInformationMessage(`Added "${cmd.name}" command`);
+		showTimedInfo(`Added "${cmd.name}" command`);
 	}
 
 	private async _deleteGroup(groupName: string): Promise<void> {
@@ -229,7 +240,7 @@ export class CommandsPanel {
 		const configFile = vscode.workspace.getConfiguration('commandsExtension').get<string>('configFile', 'commands-list.json');
 		const removed = await removeGroupFromFile(workspaceRoot, groupName, configFile);
 		if (removed > 0) {
-			vscode.window.showInformationMessage(`Deleted ${removed} command(s) from "${groupName}"`);
+			showTimedInfo(`Deleted ${removed} command(s) from "${groupName}"`);
 		}
 	}
 
@@ -340,4 +351,11 @@ function getNonce(): string {
 		text += possible.charAt(Math.floor(Math.random() * possible.length));
 	}
 	return text;
+}
+
+function showTimedInfo(message: string, timeout = 3000): void {
+	vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: message },
+		() => new Promise(resolve => setTimeout(resolve, timeout))
+	);
 }

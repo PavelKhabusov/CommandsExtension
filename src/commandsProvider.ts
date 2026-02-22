@@ -164,6 +164,41 @@ export async function addCommandToFile(
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
+export async function moveCommandInFile(
+  workspaceRoot: string,
+  commandName: string,
+  sourceGroup: string,
+  targetGroup: string,
+  configFileName: string = 'commands-list.json'
+): Promise<boolean> {
+  const filePath = path.join(workspaceRoot, configFileName);
+
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const data: CommandsJsonSchema = JSON.parse(raw);
+    if (!Array.isArray(data.commands)) {
+      return false;
+    }
+
+    const cmd = data.commands.find(
+      c => c.name === commandName && (c.group || 'General') === sourceGroup
+    );
+    if (!cmd) {
+      return false;
+    }
+
+    cmd.group = targetGroup;
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function removeGroupFromFile(
   workspaceRoot: string,
   groupName: string,

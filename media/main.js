@@ -186,13 +186,30 @@
 		}
 	});
 
+	/** @type {HTMLElement|null} */
+	let activeContextMenu = null;
+
+	function closeContextMenu() {
+		if (activeContextMenu) {
+			activeContextMenu.remove();
+			activeContextMenu = null;
+		}
+	}
+
+	document.addEventListener('click', closeContextMenu);
+	document.addEventListener('contextmenu', closeContextMenu);
+	document.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape') closeContextMenu();
+	});
+
 	/**
 	 * @param {{ name: string; command: string; type: string; group: string; cwd?: string; detail?: string }} cmd
 	 * @param {string} groupName
 	 * @param {boolean} isFavorited
+	 * @param {string} [groupSource]
 	 * @returns {HTMLElement}
 	 */
-	function createCommandItem(cmd, groupName, isFavorited) {
+	function createCommandItem(cmd, groupName, isFavorited, groupSource) {
 		const item = document.createElement('div');
 		item.className = 'cmd-item';
 		item.dataset.name = cmd.name;
@@ -278,6 +295,61 @@
 			});
 		});
 
+		// Context menu for moving between custom groups
+		if (groupSource === 'commands-list.json') {
+			item.addEventListener('contextmenu', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				closeContextMenu();
+
+				const otherGroups = currentGroups.filter(function(g) {
+					return g.source === 'commands-list.json' && g.name !== groupName;
+				});
+				if (otherGroups.length === 0) return;
+
+				const menu = document.createElement('div');
+				menu.className = 'context-menu';
+
+				const header = document.createElement('div');
+				header.className = 'context-menu-header';
+				header.textContent = 'Move to';
+				menu.appendChild(header);
+
+				for (const g of otherGroups) {
+					const menuItem = document.createElement('div');
+					menuItem.className = 'context-menu-item';
+					menuItem.textContent = g.name;
+					menuItem.addEventListener('click', (ev) => {
+						ev.stopPropagation();
+						vscode.postMessage({
+							type: 'moveCommand',
+							commandName: cmd.name,
+							sourceGroup: groupName,
+							targetGroup: g.name,
+						});
+						closeContextMenu();
+					});
+					menu.appendChild(menuItem);
+				}
+
+				document.body.appendChild(menu);
+				activeContextMenu = menu;
+
+				// Position the menu
+				const menuRect = menu.getBoundingClientRect();
+				let top = e.clientY;
+				let left = e.clientX;
+				if (top + menuRect.height > window.innerHeight) {
+					top = window.innerHeight - menuRect.height - 4;
+				}
+				if (left + menuRect.width > window.innerWidth) {
+					left = window.innerWidth - menuRect.width - 4;
+				}
+				menu.style.top = top + 'px';
+				menu.style.left = left + 'px';
+			});
+		}
+
 		return item;
 	}
 
@@ -315,7 +387,7 @@
 				for (const cmd of group.commands) {
 					const key = group.name + ':' + cmd.name;
 					if (currentFavorites.includes(key)) {
-						favCommands.push({ cmd, groupName: group.name });
+						favCommands.push({ cmd, groupName: group.name, groupSource: group.source });
 					}
 				}
 			}
@@ -348,8 +420,8 @@
 					favCommandsEl.classList.add('collapsed');
 				}
 
-				for (const { cmd, groupName } of favCommands) {
-					const item = createCommandItem(cmd, groupName, true);
+				for (const { cmd, groupName, groupSource } of favCommands) {
+					const item = createCommandItem(cmd, groupName, true, groupSource);
 					favCommandsEl.appendChild(item);
 				}
 
@@ -417,7 +489,7 @@
 			for (const cmd of group.commands) {
 				const key = group.name + ':' + cmd.name;
 				const isFav = currentFavorites.includes(key);
-				const item = createCommandItem(cmd, group.name, isFav);
+				const item = createCommandItem(cmd, group.name, isFav, group.source);
 				commandsEl.appendChild(item);
 			}
 

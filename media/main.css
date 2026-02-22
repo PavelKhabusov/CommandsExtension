@@ -676,3 +676,41 @@ body {
 	text-transform: none;
 	letter-spacing: 0;
 }
+
+/* ── Context Menu ── */
+
+.context-menu {
+	position: fixed;
+	z-index: 200;
+	min-width: 140px;
+	max-width: 260px;
+	padding: 4px 0;
+	background-color: var(--vscode-menu-background, var(--vscode-editor-background));
+	color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+	border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+	border-radius: 4px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.context-menu-header {
+	padding: 4px 10px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	text-transform: uppercase;
+	letter-spacing: 0.3px;
+	pointer-events: none;
+}
+
+.context-menu-item {
+	padding: 4px 10px;
+	font-size: 13px;
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.context-menu-item:hover {
+	background-color: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+	color: var(--vscode-menu-selectionForeground, var(--vscode-editor-foreground));
+}

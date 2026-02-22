@@ -28,7 +28,7 @@
       "name": "Git Push",
       "command": "git push origin HEAD",
       "type": "terminal",
-      "group": "General"
+      "group": "Git"
     },
     {
       "name": "Status",
@@ -94,7 +94,7 @@
       "name": "Start",
       "command": "npm start",
       "type": "terminal",
-      "group": "Backend"
+      "group": "General"
     },
     {
       "name": "Dev",
@@ -112,13 +112,19 @@
       "name": "Test",
       "command": "npm test",
       "type": "terminal",
-      "group": "Backend"
+      "group": "General"
     },
     {
       "name": "DB Migrate",
       "command": "npm run db:migrate",
       "type": "terminal",
       "group": "Backend"
+    },
+    {
+      "name": "Docker Build",
+      "command": "docker build -t app .",
+      "type": "terminal",
+      "group": "Docker"
     }
   ]
 }
