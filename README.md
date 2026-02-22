@@ -1,6 +1,6 @@
 # Commands Extension
 
-[![Version](https://img.shields.io/badge/version-0.0.5-blue)](https://github.com/PavelKhabusov/CommandsExtension/releases)
+[![Version](https://img.shields.io/badge/version-0.0.6-blue)](https://github.com/PavelKhabusov/CommandsExtension/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A VSCode extension that gives your project a visual command dashboard. Define commands in a `commands.json` file or let the extension auto-import your `package.json` scripts — then run them with a single click from the sidebar or a dedicated panel.

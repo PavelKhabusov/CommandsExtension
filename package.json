@@ -2,7 +2,7 @@
   "name": "commands-extension",
   "displayName": "Commands Extension",
   "description": "Auto-interface for running project commands (node, pwsh, shell) from a Webview panel",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "PavelKhabusov",
   "engines": {
     "vscode": "^1.85.0"
