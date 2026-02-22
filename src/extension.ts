@@ -1,15 +1,24 @@
 import * as vscode from 'vscode';
 import { CommandsPanel } from './webviewPanel';
+import { CommandsSidebarProvider } from './sidebarProvider';
 
 export function activate(context: vscode.ExtensionContext): void {
+  // Register the editor panel command
   const openPanelCommand = vscode.commands.registerCommand(
     'commandsExtension.openPanel',
     () => {
       CommandsPanel.createOrShow(context.extensionUri);
     }
   );
-
   context.subscriptions.push(openPanelCommand);
+
+  // Register the sidebar webview provider
+  const sidebarProvider = new CommandsSidebarProvider(context.extensionUri);
+  const sidebarRegistration = vscode.window.registerWebviewViewProvider(
+    CommandsSidebarProvider.viewType,
+    sidebarProvider
+  );
+  context.subscriptions.push(sidebarRegistration);
 
   // Watch for changes to commands.json and package.json
   if (vscode.workspace.workspaceFolders) {
@@ -24,7 +33,9 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     const onFileChange = () => {
+      // Refresh both the editor panel and the sidebar
       CommandsPanel.refresh();
+      sidebarProvider.refresh();
     };
 
     commandsWatcher.onDidChange(onFileChange);

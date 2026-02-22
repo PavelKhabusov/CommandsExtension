@@ -19,6 +19,24 @@
         "title": "Commands: Open Panel"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "commandsExtension",
+          "title": "Commands",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "commandsExtension": [
+        {
+          "type": "webview",
+          "id": "commandsExtension.sidebarView",
+          "name": "Commands"
+        }
+      ]
+    },
     "configuration": {
       "title": "Commands Extension",
       "properties": {

@@ -1,94 +1,58 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { CommandDefinition, CommandGroup } from './types';
+import { CommandDefinition } from './types';
 import { loadCommands } from './commandsProvider';
 
-export class CommandsPanel {
-	public static currentPanel: CommandsPanel | undefined;
-	private static readonly viewType = 'commandsExtension.panel';
+export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
+	public static readonly viewType = 'commandsExtension.sidebarView';
 
-	private readonly _panel: vscode.WebviewPanel;
-	private readonly _extensionUri: vscode.Uri;
-	private _disposables: vscode.Disposable[] = [];
-	private _htmlSet = false;
+	private _view?: vscode.WebviewView;
 
-	public static createOrShow(extensionUri: vscode.Uri): void {
-		const column = vscode.ViewColumn.Beside;
+	constructor(private readonly _extensionUri: vscode.Uri) {}
 
-		if (CommandsPanel.currentPanel) {
-			CommandsPanel.currentPanel._panel.reveal(column);
-			CommandsPanel.currentPanel._update();
+	public resolveWebviewView(
+		webviewView: vscode.WebviewView,
+		_context: vscode.WebviewViewResolveContext,
+		_token: vscode.CancellationToken
+	): void {
+		this._view = webviewView;
+
+		webviewView.webview.options = {
+			enableScripts: true,
+			localResourceRoots: [vscode.Uri.joinPath(this._extensionUri, 'media')],
+		};
+
+		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+
+		webviewView.webview.onDidReceiveMessage((message) => {
+			this._handleMessage(message);
+		});
+
+		// Send initial commands after a short delay for the webview to initialize
+		setTimeout(() => {
+			this._sendCommands();
+		}, 100);
+	}
+
+	public async refresh(): Promise<void> {
+		if (this._view) {
+			await this._sendCommands();
+		}
+	}
+
+	private async _sendCommands(): Promise<void> {
+		if (!this._view) {
 			return;
 		}
 
-		const panel = vscode.window.createWebviewPanel(
-			CommandsPanel.viewType,
-			'Commands',
-			column,
-			{
-				enableScripts: true,
-				localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
-				retainContextWhenHidden: true,
-			}
-		);
-
-		CommandsPanel.currentPanel = new CommandsPanel(panel, extensionUri);
-	}
-
-	public static refresh(): void {
-		if (CommandsPanel.currentPanel) {
-			CommandsPanel.currentPanel._update();
-		}
-	}
-
-	private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
-		this._panel = panel;
-		this._extensionUri = extensionUri;
-
-		this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
-		this._panel.webview.onDidReceiveMessage(
-			(message) => this._handleMessage(message),
-			null,
-			this._disposables
-		);
-
-		this._update();
-	}
-
-	public dispose(): void {
-		CommandsPanel.currentPanel = undefined;
-		this._panel.dispose();
-		while (this._disposables.length) {
-			const d = this._disposables.pop();
-			if (d) {
-				d.dispose();
-			}
-		}
-	}
-
-	private async _update(): Promise<void> {
 		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 		if (!workspaceRoot) {
-			this._panel.webview.html = this._getNoWorkspaceHtml();
 			return;
 		}
 
 		const configFile = vscode.workspace.getConfiguration('commandsExtension').get<string>('configFile', 'commands.json');
 		const groups = await loadCommands(workspaceRoot, configFile);
-
-		if (!this._htmlSet) {
-			// Set HTML only once on first creation
-			this._panel.webview.html = this._getHtmlForWebview();
-			this._htmlSet = true;
-
-			// Small delay to ensure the webview script has initialized
-			setTimeout(() => {
-				this._panel.webview.postMessage({ type: 'updateCommands', groups });
-			}, 100);
-		} else {
-			// Subsequent updates: only send data via postMessage
-			this._panel.webview.postMessage({ type: 'updateCommands', groups });
-		}
+		this._view.webview.postMessage({ type: 'updateCommands', groups });
 	}
 
 	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string }): void {
@@ -105,11 +69,11 @@ export class CommandsPanel {
 					cwd: message.cwd,
 				};
 				this._runCommand(cmd);
-				this._panel.webview.postMessage({ type: 'commandStarted', name: message.name });
+				this._view?.webview.postMessage({ type: 'commandStarted', name: message.name });
 				break;
 			}
 			case 'refresh':
-				this._update();
+				this._sendCommands();
 				break;
 		}
 	}
@@ -138,9 +102,7 @@ export class CommandsPanel {
 		}
 	}
 
-	private _getHtmlForWebview(): string {
-		const webview = this._panel.webview;
-
+	private _getHtmlForWebview(webview: vscode.Webview): string {
 		const scriptUri = webview.asWebviewUri(
 			vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js')
 		);
@@ -172,20 +134,6 @@ export class CommandsPanel {
 		<p>Add a <code>commands.json</code> file or <code>package.json</code> scripts to your workspace.</p>
 	</div>
 	<script nonce="${nonce}" src="${scriptUri}"></script>
-</body>
-</html>`;
-	}
-
-	private _getNoWorkspaceHtml(): string {
-		return `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Commands</title>
-</head>
-<body>
-	<p>No workspace folder is open. Please open a folder to use Commands Extension.</p>
 </body>
 </html>`;
 	}

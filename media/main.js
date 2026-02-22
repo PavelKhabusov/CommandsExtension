@@ -5,7 +5,7 @@
 	const vscode = acquireVsCodeApi();
 
 	const container = document.getElementById('commands-container');
-	const refreshBtn = document.getElementById('refresh-btn');
+	const refreshBtn = document.getElementById('refreshBtn');
 
 	if (refreshBtn) {
 		refreshBtn.addEventListener('click', () => {
@@ -116,6 +116,5 @@
 		return div.innerHTML;
 	}
 
-	// Request initial data
-	vscode.postMessage({ type: 'refresh' });
+	// Initial data is sent by the extension after setting HTML — no need to request it
 })();
