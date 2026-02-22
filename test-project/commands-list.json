@@ -77,6 +77,48 @@
       "command": "git stash pop",
       "type": "terminal",
       "group": "Git"
+    },
+    {
+      "name": "Dev Server",
+      "command": "npm run dev",
+      "type": "terminal",
+      "group": "React"
+    },
+    {
+      "name": "Build",
+      "command": "npm run build",
+      "type": "terminal",
+      "group": "React"
+    },
+    {
+      "name": "Start",
+      "command": "npm start",
+      "type": "terminal",
+      "group": "Backend"
+    },
+    {
+      "name": "Dev",
+      "command": "npm run dev",
+      "type": "terminal",
+      "group": "Backend"
+    },
+    {
+      "name": "Build",
+      "command": "npm run build",
+      "type": "terminal",
+      "group": "Backend"
+    },
+    {
+      "name": "Test",
+      "command": "npm test",
+      "type": "terminal",
+      "group": "Backend"
+    },
+    {
+      "name": "DB Migrate",
+      "command": "npm run db:migrate",
+      "type": "terminal",
+      "group": "Backend"
     }
   ]
 }

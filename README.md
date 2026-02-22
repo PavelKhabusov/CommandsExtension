@@ -4,40 +4,86 @@
 [![Marketplace](https://img.shields.io/visual-studio-marketplace/v/PavelKhabusov.commands-extension?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A VSCode extension that gives your project a visual command dashboard. Define commands in a `commands-list.json` file or let the extension auto-import your `package.json` scripts — then run them with a single click from the sidebar or a dedicated panel.
+**One-click command runner for VS Code.** Define commands in JSON or let the extension pick up your `package.json` scripts automatically — then run anything from a sidebar or panel with a single click.
 
-## Install
+> No more switching to the terminal and typing the same commands over and over.
 
-**From Marketplace:**
-1. Open VSCode
-2. Go to Extensions (`Ctrl+Shift+X`)
-3. Search for **"Commands Extension"**
-4. Click **Install**
+---
 
-**Or via CLI:**
+## Quick Start
+
 ```bash
 code --install-extension PavelKhabusov.commands-extension
 ```
 
+1. Open a workspace in VS Code
+2. Create `commands-list.json` in the root (or just have a `package.json` with scripts)
+3. Click the **Commands** icon in the Activity Bar — done
+
+---
+
 ## Features
 
-- **Sidebar & Panel** — Access commands from the Activity Bar sidebar or via `Ctrl+Shift+P` > "Commands: Open Panel"
-- **Multiple command types** — `terminal` (default shell), `node`, `pwsh` (PowerShell)
-- **Grouped commands** — Organize commands into collapsible groups
-- **Add commands from UI** — Click `+` to add new commands directly without editing JSON
-- **Terminal reuse** — Re-running a command reuses its existing terminal instead of creating a new one
-- **Auto-refresh** — File watcher detects changes to `commands-list.json` and `package.json` and updates the UI
-- **Theme-aware** — Uses VSCode CSS variables for a native look in any theme (light, dark, high contrast)
+### Sidebar & Panel
 
-## Getting Started
+Access your commands from the Activity Bar sidebar or open a dedicated panel via `Ctrl+Shift+P` > **Commands: Open Panel**.
 
-1. Open a workspace folder in VSCode
-2. Create a `commands-list.json` file in the workspace root (see format below)
-3. Open the Commands sidebar from the Activity Bar — your commands appear automatically
+### Collapsible Groups
 
-Scripts from `package.json` are also imported automatically under the "npm scripts" group.
+Organize commands into named groups. Collapse/expand individual groups or all at once. Group state is preserved when commands update.
 
-## commands-list.json Format
+### Favorites
+
+Star any command to pin it to the **Favorites** group at the top. Favorites persist across sessions.
+
+### Multiple Shell Types
+
+| Type | Runs as |
+|------|---------|
+| `terminal` | Default shell (bash, zsh, cmd, ...) |
+| `node` | `node <command>` |
+| `pwsh` | `pwsh -Command <command>` |
+
+### Add Commands from UI
+
+Click **+** in the toolbar to add new commands without touching JSON. Pick an existing group or create a new one on the fly.
+
+### Terminal Reuse
+
+Re-running a command reuses its existing terminal instead of spawning a new one. Use the **Clear Terminals** button to clean up.
+
+### Auto-Refresh
+
+File watchers monitor `commands-list.json` and `package.json` — the UI updates instantly when you save changes.
+
+### Marketplace Templates
+
+The built-in **Recommended** section offers ready-made command sets for popular stacks:
+
+| Template | Description |
+|----------|-------------|
+| React | Dev server, build, test, lint, format |
+| Node.js Backend | Start, dev, build, test, DB migrate |
+| Next.js | Dev, build, start, lint |
+| Docker | Build, compose up/down, logs |
+| Expo | Start, iOS/Android, EAS build/submit |
+| Python | Run, pytest, pip install/freeze |
+| Git | Status, pull, push, stash, log |
+| Turborepo | Monorepo build, dev, lint, test |
+| Deploy | Vercel & Netlify deploy commands |
+| Testing | Test, watch, coverage |
+| Linting | Lint, format, typecheck |
+| Git Hooks | Prepare, pre-commit, pre-push |
+
+Click **+** on a template to add the whole set, or expand it and add individual commands.
+
+### Theme-Aware
+
+Uses VS Code CSS variables — looks native in any theme (light, dark, high contrast).
+
+---
+
+## `commands-list.json` Format
 
 ```json
 {
@@ -64,27 +110,21 @@ Scripts from `package.json` are also imported automatically under the "npm scrip
 }
 ```
 
-### Command Fields
+### Fields
 
 | Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Display name shown in the UI |
+|-------|------|:--------:|-------------|
+| `name` | string | yes | Display name in the UI |
 | `command` | string | yes | Command to execute |
 | `type` | `"terminal"` \| `"node"` \| `"pwsh"` | yes | Execution type |
-| `group` | string | no | Group name for organizing (default: "General") |
+| `group` | string | no | Group name (default: `"General"`) |
 | `cwd` | string | no | Working directory relative to workspace root |
 
-### Command Types
+---
 
-| Type | Description |
-|------|-------------|
-| `terminal` | Runs the command in the default shell (bash, zsh, cmd, etc.) |
-| `node` | Runs with `node <command>` |
-| `pwsh` | Runs with `pwsh -Command <command>` (PowerShell) |
+## `package.json` Scripts
 
-## package.json Scripts
-
-Scripts from your `package.json` are automatically imported under the **"npm scripts"** group. For example:
+Scripts from your `package.json` are auto-imported under the **npm scripts** group:
 
 ```json
 {
@@ -96,17 +136,21 @@ Scripts from your `package.json` are automatically imported under the **"npm scr
 }
 ```
 
-These appear as `npm run build`, `npm run test`, `npm run start` in the UI.
+These appear as `npm run build`, `npm run test`, `npm run start`.
+
+---
 
 ## Configuration
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `commandsExtension.configFile` | `commands-list.json` | Path to commands config file (relative to workspace root) |
+| `commandsExtension.configFile` | `commands-list.json` | Path to config file (relative to workspace root) |
+
+---
 
 ## Requirements
 
-- Visual Studio Code 1.85.0 or later
+- VS Code 1.85.0+
 
 ## License
 

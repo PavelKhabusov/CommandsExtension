@@ -1,0 +1,10 @@
+{
+  "commands": [
+    {
+      "name": "Push (set upstream)",
+      "command": "git push -u origin HEAD",
+      "type": "terminal",
+      "group": "Git"
+    }
+  ]
+}

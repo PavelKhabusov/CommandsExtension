@@ -13,6 +13,8 @@
 	const collapseBtn = document.getElementById('collapseBtn');
 
 	let groupsCollapsed = false;
+	/** @type {Set<string>} */
+	const collapsedGroups = new Set();
 	let currentFavorites = /** @type {string[]} */ ([]);
 	let currentGroups = /** @type {{ name: string; source?: string }[]} */ ([]);
 
@@ -22,6 +24,18 @@
 			const commands = container.querySelectorAll('.group-commands');
 			const chevrons = container.querySelectorAll('.group-chevron');
 			groupsCollapsed = !groupsCollapsed;
+			if (groupsCollapsed) {
+				// Collect all group names into collapsedGroups
+				container.querySelectorAll('.command-group').forEach(el => {
+					const nameEl = el.querySelector('.group-name');
+					if (nameEl) {
+						const name = nameEl.textContent || '';
+						collapsedGroups.add(name.startsWith('\u2605') ? '__favorites__' : name);
+					}
+				});
+			} else {
+				collapsedGroups.clear();
+			}
 			commands.forEach(el => {
 				if (groupsCollapsed) {
 					el.classList.add('collapsed');
@@ -278,6 +292,20 @@
 			return;
 		}
 
+		// Save current collapsed state from DOM before wiping
+		container.querySelectorAll('.command-group').forEach(el => {
+			const nameEl = el.querySelector('.group-name');
+			const cmdsEl = el.querySelector('.group-commands');
+			if (nameEl && cmdsEl) {
+				const name = el.classList.contains('favorites-group') ? '__favorites__' : (nameEl.textContent || '');
+				if (cmdsEl.classList.contains('collapsed')) {
+					collapsedGroups.add(name);
+				} else {
+					collapsedGroups.delete(name);
+				}
+			}
+		});
+
 		container.innerHTML = '';
 
 		// Build and render Favorites group at the top
@@ -306,7 +334,19 @@
 					const chevron = favHeader.querySelector('.group-chevron');
 					if (chevron) chevron.classList.toggle('collapsed');
 					favCommandsEl.classList.toggle('collapsed');
+					if (favCommandsEl.classList.contains('collapsed')) {
+						collapsedGroups.add('__favorites__');
+					} else {
+						collapsedGroups.delete('__favorites__');
+					}
 				});
+
+				// Restore collapsed state for favorites
+				if (collapsedGroups.has('__favorites__') || groupsCollapsed) {
+					const favChevron = favHeader.querySelector('.group-chevron');
+					if (favChevron) favChevron.classList.add('collapsed');
+					favCommandsEl.classList.add('collapsed');
+				}
 
 				for (const { cmd, groupName } of favCommands) {
 					const item = createCommandItem(cmd, groupName, true);
@@ -361,7 +401,18 @@
 					chevron.classList.toggle('collapsed');
 				}
 				commandsEl.classList.toggle('collapsed');
+				if (commandsEl.classList.contains('collapsed')) {
+					collapsedGroups.add(group.name);
+				} else {
+					collapsedGroups.delete(group.name);
+				}
 			});
+
+			// Restore collapsed state
+			if (collapsedGroups.has(group.name) || groupsCollapsed) {
+				chevron.classList.add('collapsed');
+				commandsEl.classList.add('collapsed');
+			}
 
 			for (const cmd of group.commands) {
 				const key = group.name + ':' + cmd.name;
