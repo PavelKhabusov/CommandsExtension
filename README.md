@@ -1,6 +1,6 @@
 # Commands Extension
 
-[![Version](https://img.shields.io/badge/version-0.0.8-blue)](https://github.com/PavelKhabusov/CommandsExtension/releases)
+[![Version](https://img.shields.io/badge/version-0.0.9-blue)](https://github.com/PavelKhabusov/CommandsExtension/releases)
 [![Marketplace](https://img.shields.io/visual-studio-marketplace/v/PavelKhabusov.commands-extension?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
