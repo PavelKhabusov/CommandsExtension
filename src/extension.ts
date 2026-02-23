@@ -50,7 +50,15 @@ export function activate(context: vscode.ExtensionContext): void {
     packageWatcher.onDidCreate(onFileChange);
     packageWatcher.onDidDelete(onFileChange);
 
-    context.subscriptions.push(commandsWatcher, packageWatcher);
+    const ps1Watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], '*.ps1')
+    );
+
+    ps1Watcher.onDidChange(onFileChange);
+    ps1Watcher.onDidCreate(onFileChange);
+    ps1Watcher.onDidDelete(onFileChange);
+
+    context.subscriptions.push(commandsWatcher, packageWatcher, ps1Watcher);
   }
 }
 

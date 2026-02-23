@@ -1,10 +1,10 @@
 {
   "commands": [
     {
-      "name": "Push (set upstream)",
-      "command": "git push -u origin HEAD",
+      "name": "Dev Server",
+      "command": "npm run dev",
       "type": "terminal",
-      "group": "Git"
+      "group": "React"
     }
   ]
 }

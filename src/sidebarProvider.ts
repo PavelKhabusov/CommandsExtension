@@ -52,15 +52,22 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 		const configFile = vscode.workspace.getConfiguration('commandsExtension').get<string>('configFile', 'commands-list.json');
 		const groups = await loadCommands(workspaceRoot, configFile);
 		const favorites = this._getFavorites();
-		this._view.webview.postMessage({ type: 'updateCommands', groups, favorites });
+		const collapsedGroups = this._getCollapsedGroups();
+		this._view.webview.postMessage({ type: 'updateCommands', groups, favorites, collapsedGroups });
 		this._view.webview.postMessage({ type: 'updateMarketplace', templates: getMarketplaceTemplates() });
 	}
 
-	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string; cmdType?: string; group?: string; groupId?: string; commandName?: string; commandKey?: string; sourceGroup?: string; targetGroup?: string }): void {
+	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string; cmdType?: string; group?: string; groupId?: string; commandName?: string; commandKey?: string; sourceGroup?: string; targetGroup?: string; collapsedGroups?: string[] }): void {
 		switch (message.type) {
 			case 'ready':
 				this._sendCommands();
 				break;
+			case 'saveCollapsedGroups': {
+				if (message.collapsedGroups) {
+					this._setCollapsedGroups(message.collapsedGroups);
+				}
+				break;
+			}
 			case 'toggleFavorite': {
 				if (!message.commandKey) return;
 				const favorites = this._getFavorites();
@@ -211,6 +218,14 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 
 	private async _setFavorites(favorites: string[]): Promise<void> {
 		await this._context.workspaceState.update('commandsExtension.favorites', favorites);
+	}
+
+	private _getCollapsedGroups(): string[] {
+		return this._context.workspaceState.get<string[]>('commandsExtension.collapsedGroups', []);
+	}
+
+	private async _setCollapsedGroups(groups: string[]): Promise<void> {
+		await this._context.workspaceState.update('commandsExtension.collapsedGroups', groups);
 	}
 
 	private _runCommand(cmd: CommandDefinition): void {

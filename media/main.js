@@ -15,8 +15,13 @@
 	let groupsCollapsed = false;
 	/** @type {Set<string>} */
 	const collapsedGroups = new Set();
+	let collapsedGroupsInitialized = false;
 	let currentFavorites = /** @type {string[]} */ ([]);
 	let currentGroups = /** @type {{ name: string; source?: string }[]} */ ([]);
+
+	function saveCollapsedGroups() {
+		vscode.postMessage({ type: 'saveCollapsedGroups', collapsedGroups: Array.from(collapsedGroups) });
+	}
 
 	if (collapseBtn) {
 		collapseBtn.addEventListener('click', () => {
@@ -50,6 +55,7 @@
 					el.classList.remove('collapsed');
 				}
 			});
+			saveCollapsedGroups();
 		});
 	}
 
@@ -175,6 +181,12 @@
 			case 'updateCommands':
 				currentFavorites = message.favorites || [];
 				currentGroups = (message.groups || []).map(function(g) { return { name: g.name, source: g.source }; });
+				if (!collapsedGroupsInitialized && message.collapsedGroups) {
+					for (const name of message.collapsedGroups) {
+						collapsedGroups.add(name);
+					}
+					collapsedGroupsInitialized = true;
+				}
 				renderGroups(message.groups);
 				break;
 			case 'commandStarted':
@@ -411,6 +423,7 @@
 					} else {
 						collapsedGroups.delete('__favorites__');
 					}
+					saveCollapsedGroups();
 				});
 
 				// Restore collapsed state for favorites
@@ -478,6 +491,7 @@
 				} else {
 					collapsedGroups.delete(group.name);
 				}
+				saveCollapsedGroups();
 			});
 
 			// Restore collapsed state

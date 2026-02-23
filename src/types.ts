@@ -10,7 +10,7 @@ export interface CommandDefinition {
 export interface CommandGroup {
   name: string;
   commands: CommandDefinition[];
-  source?: 'commands-list.json' | 'package.json';
+  source?: CommandSource;
 }
 
-export type CommandSource = 'commands-list.json' | 'package.json';
+export type CommandSource = 'commands-list.json' | 'package.json' | 'ps1-scripts';

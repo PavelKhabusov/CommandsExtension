@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { CommandDefinition, CommandGroup } from './types';
+import { CommandDefinition, CommandGroup, CommandSource } from './types';
 
 interface CommandsJsonSchema {
   commands: Array<{
@@ -82,6 +82,28 @@ function loadFromPackageJson(filePath: string): CommandDefinition[] {
   }));
 }
 
+function loadPs1Scripts(workspaceRoot: string): CommandDefinition[] {
+  try {
+    const entries = fs.readdirSync(workspaceRoot, { withFileTypes: true });
+    return entries
+      .filter(e => e.isFile() && e.name.endsWith('.ps1'))
+      .map(e => ({
+        name: e.name.replace(/\.ps1$/, ''),
+        command: `.\\${e.name}`,
+        type: 'pwsh' as const,
+        group: 'PowerShell scripts',
+        detail: e.name,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+const autoGroups: Record<string, CommandSource> = {
+  'npm scripts': 'package.json',
+  'PowerShell scripts': 'ps1-scripts',
+};
+
 function groupCommands(commands: CommandDefinition[]): CommandGroup[] {
   const groupMap = new Map<string, CommandDefinition[]>();
 
@@ -95,20 +117,20 @@ function groupCommands(commands: CommandDefinition[]): CommandGroup[] {
   }
 
   const groups: CommandGroup[] = [];
-  const npmScriptsGroup: CommandGroup | undefined = groupMap.has('npm scripts')
-    ? { name: 'npm scripts', commands: groupMap.get('npm scripts')!, source: 'package.json' }
-    : undefined;
+  const autoGroupEntries: CommandGroup[] = [];
 
-  // User-defined groups first (sorted alphabetically), then npm scripts
   for (const [name, commands] of groupMap) {
-    if (name !== 'npm scripts') {
+    if (name in autoGroups) {
+      autoGroupEntries.push({ name, commands, source: autoGroups[name] });
+    } else {
       groups.push({ name, commands, source: 'commands-list.json' });
     }
   }
   groups.sort((a, b) => a.name.localeCompare(b.name));
 
-  if (npmScriptsGroup) {
-    groups.push(npmScriptsGroup);
+  // Auto-detected groups go at the end
+  for (const g of autoGroupEntries) {
+    groups.push(g);
   }
 
   return groups;
@@ -120,8 +142,9 @@ export async function loadCommands(workspaceRoot: string, configFileName: string
 
   const commandsFromJson = loadFromCommandsJson(commandsJsonPath);
   const commandsFromPackage = loadFromPackageJson(packageJsonPath);
+  const commandsFromPs1 = loadPs1Scripts(workspaceRoot);
 
-  const allCommands = [...commandsFromJson, ...commandsFromPackage];
+  const allCommands = [...commandsFromJson, ...commandsFromPackage, ...commandsFromPs1];
   return groupCommands(allCommands);
 }
 

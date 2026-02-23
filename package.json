@@ -68,7 +68,6 @@
     "lint": "eslint src --ext ts",
     "package": "rm -f commands-extension-*.vsix && npm run compile && vsce package --allow-missing-repository",
     "install-local": "npm run package && code --install-extension commands-extension-*.vsix",
-    "gitpush": "git push origin HEAD",
     "update": "git add -A && git commit -m 'pre-release changes' && npm version patch && git push && git push --tags && npm run package",
     "test-ext": "npm run compile && code --extensionDevelopmentPath=\"$PWD\"",
     "ralph": "./ralph-run.sh --monitor"
