@@ -89,8 +89,8 @@ function loadPs1Scripts(workspaceRoot: string): CommandDefinition[] {
       .filter(e => e.isFile() && e.name.endsWith('.ps1'))
       .map(e => ({
         name: e.name.replace(/\.ps1$/, ''),
-        command: `.\\${e.name}`,
-        type: 'pwsh' as const,
+        command: `pwsh ./${e.name}`,
+        type: 'terminal' as const,
         group: 'PowerShell scripts',
         detail: e.name,
       }));
