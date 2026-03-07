@@ -58,6 +58,10 @@ export class CommandsPanel {
 		);
 
 		this._update();
+
+		TerminalManager.getInstance().onDidChange(() => {
+			this._sendActiveTerminals();
+		});
 	}
 
 	public dispose(): void {
@@ -91,7 +95,8 @@ export class CommandsPanel {
 			// Subsequent updates: only send data via postMessage
 			const favorites = this._getFavorites();
 			const collapsedGroups = this._getCollapsedGroups();
-			this._panel.webview.postMessage({ type: 'updateCommands', groups, favorites, collapsedGroups });
+			const activeTerminals = TerminalManager.getInstance().getActiveCommandNames();
+			this._panel.webview.postMessage({ type: 'updateCommands', groups, favorites, collapsedGroups, activeTerminals });
 			this._panel.webview.postMessage({ type: 'updateMarketplace', templates: getMarketplaceTemplates() });
 		}
 	}
@@ -100,6 +105,10 @@ export class CommandsPanel {
 		switch (message.type) {
 			case 'ready':
 				this._update();
+
+		TerminalManager.getInstance().onDidChange(() => {
+			this._sendActiveTerminals();
+		});
 				break;
 			case 'saveCollapsedGroups': {
 				if (message.collapsedGroups) {
@@ -118,6 +127,10 @@ export class CommandsPanel {
 				}
 				this._setFavorites(favorites);
 				this._update();
+
+		TerminalManager.getInstance().onDidChange(() => {
+			this._sendActiveTerminals();
+		});
 				break;
 			}
 			case 'runCommand': {
@@ -179,11 +192,20 @@ export class CommandsPanel {
 				this._deleteGroup(message.group);
 				break;
 			}
+			case 'closeTerminal': {
+				if (!message.name) return;
+				TerminalManager.getInstance().closeTerminal(message.name);
+				break;
+			}
 			case 'clearTerminals':
 				TerminalManager.getInstance().disposeAll();
 				break;
 			case 'refresh':
 				this._update();
+
+		TerminalManager.getInstance().onDidChange(() => {
+			this._sendActiveTerminals();
+		});
 				break;
 		}
 	}
@@ -265,6 +287,11 @@ export class CommandsPanel {
 
 	private async _setCollapsedGroups(groups: string[]): Promise<void> {
 		await this._context.workspaceState.update('commandsExtension.collapsedGroups', groups);
+	}
+
+	private _sendActiveTerminals(): void {
+		const activeTerminals = TerminalManager.getInstance().getActiveCommandNames();
+		this._panel.webview.postMessage({ type: 'updateActiveTerminals', activeTerminals });
 	}
 
 	private _runCommand(cmd: CommandDefinition): void {

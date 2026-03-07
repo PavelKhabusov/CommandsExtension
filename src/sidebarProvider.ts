@@ -31,6 +31,10 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 		webviewView.webview.onDidReceiveMessage((message) => {
 			this._handleMessage(message);
 		});
+
+		TerminalManager.getInstance().onDidChange(() => {
+			this._sendActiveTerminals();
+		});
 	}
 
 	public async refresh(): Promise<void> {
@@ -53,8 +57,15 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 		const groups = await loadCommands(workspaceRoot, configFile);
 		const favorites = this._getFavorites();
 		const collapsedGroups = this._getCollapsedGroups();
-		this._view.webview.postMessage({ type: 'updateCommands', groups, favorites, collapsedGroups });
+		const activeTerminals = TerminalManager.getInstance().getActiveCommandNames();
+		this._view.webview.postMessage({ type: 'updateCommands', groups, favorites, collapsedGroups, activeTerminals });
 		this._view.webview.postMessage({ type: 'updateMarketplace', templates: getMarketplaceTemplates() });
+	}
+
+	private _sendActiveTerminals(): void {
+		if (!this._view) return;
+		const activeTerminals = TerminalManager.getInstance().getActiveCommandNames();
+		this._view.webview.postMessage({ type: 'updateActiveTerminals', activeTerminals });
 	}
 
 	private _handleMessage(message: { type: string; name?: string; command?: string; shellType?: string; cwd?: string; cmdType?: string; group?: string; groupId?: string; commandName?: string; commandKey?: string; sourceGroup?: string; targetGroup?: string; collapsedGroups?: string[] }): void {
@@ -138,6 +149,11 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 			case 'deleteGroup': {
 				if (!message.group) return;
 				this._deleteGroup(message.group);
+				break;
+			}
+			case 'closeTerminal': {
+				if (!message.name) return;
+				TerminalManager.getInstance().closeTerminal(message.name);
 				break;
 			}
 			case 'clearTerminals':

@@ -10,6 +10,7 @@ export class TerminalManager {
 	private static _instance: TerminalManager | undefined;
 	private readonly _terminals = new Map<string, vscode.Terminal>();
 	private readonly _disposables: vscode.Disposable[] = [];
+	private _onChangeListener?: () => void;
 
 	private constructor() {
 		// Clean up terminals from the map when they are closed
@@ -21,6 +22,7 @@ export class TerminalManager {
 						break;
 					}
 				}
+				this._notifyChange();
 			})
 		);
 	}
@@ -30,6 +32,36 @@ export class TerminalManager {
 			TerminalManager._instance = new TerminalManager();
 		}
 		return TerminalManager._instance;
+	}
+
+	public onDidChange(listener: () => void): void {
+		this._onChangeListener = listener;
+	}
+
+	private _notifyChange(): void {
+		if (this._onChangeListener) {
+			this._onChangeListener();
+		}
+	}
+
+	/** Returns command names (without "Cmd: " prefix) that have active terminals. */
+	public getActiveCommandNames(): string[] {
+		const names: string[] = [];
+		for (const [terminalName, terminal] of this._terminals) {
+			if (this._isTerminalAlive(terminal)) {
+				names.push(terminalName.replace(/^Cmd: /, ''));
+			}
+		}
+		return names;
+	}
+
+	public closeTerminal(commandName: string): void {
+		const terminalName = `Cmd: ${commandName}`;
+		const terminal = this._terminals.get(terminalName);
+		if (terminal) {
+			terminal.dispose();
+			this._terminals.delete(terminalName);
+		}
 	}
 
 	public runCommand(cmd: CommandDefinition): void {
@@ -64,6 +96,7 @@ export class TerminalManager {
 		this._terminals.set(terminalName, terminal);
 		terminal.show();
 		terminal.sendText(commandText);
+		this._notifyChange();
 	}
 
 	private _isTerminalAlive(terminal: vscode.Terminal): boolean {
@@ -83,6 +116,7 @@ export class TerminalManager {
 				terminal.dispose();
 			}
 		}
+		this._notifyChange();
 	}
 
 	public getDisposables(): vscode.Disposable[] {

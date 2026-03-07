@@ -714,3 +714,53 @@ body {
 	background-color: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
 	color: var(--vscode-menu-selectionForeground, var(--vscode-editor-foreground));
 }
+
+/* ── Active Terminal Indicator ── */
+
+.cmd-item.has-terminal .cmd-icon {
+	color: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.cmd-item.has-terminal .cmd-icon {
+	position: relative;
+}
+
+.cmd-item.has-terminal .cmd-icon::after {
+	content: '';
+	display: block;
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background-color: var(--vscode-testing-iconPassed, #73c991);
+	position: absolute;
+	bottom: -1px;
+	right: -1px;
+}
+
+.cmd-close-btn {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.1s;
+	line-height: 1;
+	display: none;
+}
+
+.cmd-item.has-terminal .cmd-close-btn {
+	display: inline-flex;
+}
+
+.cmd-item.has-terminal:hover .cmd-close-btn {
+	opacity: 1;
+}
+
+.cmd-close-btn:hover {
+	background-color: var(--vscode-list-hoverBackground);
+	color: var(--vscode-errorForeground);
+}

@@ -18,6 +18,7 @@
 	let collapsedGroupsInitialized = false;
 	let currentFavorites = /** @type {string[]} */ ([]);
 	let currentGroups = /** @type {{ name: string; source?: string }[]} */ ([]);
+	let activeTerminals = /** @type {string[]} */ ([]);
 
 	function saveCollapsedGroups() {
 		vscode.postMessage({ type: 'saveCollapsedGroups', collapsedGroups: Array.from(collapsedGroups) });
@@ -178,9 +179,14 @@
 	window.addEventListener('message', (event) => {
 		const message = event.data;
 		switch (message.type) {
+			case 'updateActiveTerminals':
+				activeTerminals = message.activeTerminals || [];
+				updateTerminalIndicators();
+				break;
 			case 'updateCommands':
 				currentFavorites = message.favorites || [];
 				currentGroups = (message.groups || []).map(function(g) { return { name: g.name, source: g.source }; });
+				activeTerminals = message.activeTerminals || [];
 				if (!collapsedGroupsInitialized && message.collapsedGroups) {
 					for (const name of message.collapsedGroups) {
 						collapsedGroups.add(name);
@@ -295,6 +301,22 @@
 			vscode.postMessage({ type: 'toggleFavorite', commandKey: groupName + ':' + cmd.name });
 		});
 		item.appendChild(starBtn);
+
+		// Close terminal button (visible only when terminal is active)
+		const closeBtn = document.createElement('button');
+		closeBtn.className = 'cmd-close-btn';
+		closeBtn.innerHTML = '&#x2715;';
+		closeBtn.title = 'Close terminal';
+		closeBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({ type: 'closeTerminal', name: cmd.name });
+		});
+		item.appendChild(closeBtn);
+
+		// Apply active terminal indicator if terminal is open
+		if (activeTerminals.includes(cmd.name)) {
+			item.classList.add('has-terminal');
+		}
 
 		// Click to run command
 		item.addEventListener('click', () => {
@@ -516,6 +538,20 @@
 	/**
 	 * @param {string} name
 	 */
+	function updateTerminalIndicators() {
+		if (!container) return;
+		const items = container.querySelectorAll('.cmd-item');
+		for (const item of items) {
+			if (item instanceof HTMLElement) {
+				if (activeTerminals.includes(item.dataset.name || '')) {
+					item.classList.add('has-terminal');
+				} else {
+					item.classList.remove('has-terminal');
+				}
+			}
+		}
+	}
+
 	function markCommandStarted(name) {
 		if (!container) return;
 		const items = container.querySelectorAll('.cmd-item');
