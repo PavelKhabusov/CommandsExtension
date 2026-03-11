@@ -38,12 +38,14 @@ function safeParseJson<T>(raw: string, filePath: string): T | null {
   }
 }
 
-function loadFromCommandsJson(filePath: string): CommandDefinition[] {
-  if (!fs.existsSync(filePath)) {
+async function loadFromCommandsJson(filePath: string): Promise<CommandDefinition[]> {
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(filePath, 'utf-8');
+  } catch {
     return [];
   }
 
-  const raw = fs.readFileSync(filePath, 'utf-8');
   const parsed = safeParseJson<CommandsJsonSchema>(raw, filePath);
 
   if (!parsed || !parsed.commands || !Array.isArray(parsed.commands)) {
@@ -61,12 +63,14 @@ function loadFromCommandsJson(filePath: string): CommandDefinition[] {
     }));
 }
 
-function loadFromPackageJson(filePath: string): CommandDefinition[] {
-  if (!fs.existsSync(filePath)) {
+async function loadFromPackageJson(filePath: string): Promise<CommandDefinition[]> {
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(filePath, 'utf-8');
+  } catch {
     return [];
   }
 
-  const raw = fs.readFileSync(filePath, 'utf-8');
   const parsed = safeParseJson<PackageJsonSchema>(raw, filePath);
 
   if (!parsed || !parsed.scripts || typeof parsed.scripts !== 'object') {
@@ -82,9 +86,9 @@ function loadFromPackageJson(filePath: string): CommandDefinition[] {
   }));
 }
 
-function loadPs1Scripts(workspaceRoot: string): CommandDefinition[] {
+async function loadPs1Scripts(workspaceRoot: string): Promise<CommandDefinition[]> {
   try {
-    const entries = fs.readdirSync(workspaceRoot, { withFileTypes: true });
+    const entries = await fs.promises.readdir(workspaceRoot, { withFileTypes: true });
     return entries
       .filter(e => e.isFile() && e.name.endsWith('.ps1'))
       .map(e => ({
@@ -140,12 +144,27 @@ export async function loadCommands(workspaceRoot: string, configFileName: string
   const commandsJsonPath = path.join(workspaceRoot, configFileName);
   const packageJsonPath = path.join(workspaceRoot, 'package.json');
 
-  const commandsFromJson = loadFromCommandsJson(commandsJsonPath);
-  const commandsFromPackage = loadFromPackageJson(packageJsonPath);
-  const commandsFromPs1 = loadPs1Scripts(workspaceRoot);
+  const [commandsFromJson, commandsFromPackage, commandsFromPs1] = await Promise.all([
+    loadFromCommandsJson(commandsJsonPath),
+    loadFromPackageJson(packageJsonPath),
+    loadPs1Scripts(workspaceRoot),
+  ]);
 
   const allCommands = [...commandsFromJson, ...commandsFromPackage, ...commandsFromPs1];
   return groupCommands(allCommands);
+}
+
+async function readCommandsJson(filePath: string): Promise<CommandsJsonSchema | null> {
+  try {
+    const raw = await fs.promises.readFile(filePath, 'utf-8');
+    const data: CommandsJsonSchema = JSON.parse(raw);
+    if (!Array.isArray(data.commands)) {
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 export async function addCommandToFile(
@@ -155,19 +174,7 @@ export async function addCommandToFile(
 ): Promise<void> {
   const filePath = path.join(workspaceRoot, configFileName);
 
-  let data: CommandsJsonSchema = { commands: [] };
-
-  if (fs.existsSync(filePath)) {
-    try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      data = JSON.parse(raw);
-      if (!Array.isArray(data.commands)) {
-        data.commands = [];
-      }
-    } catch {
-      data = { commands: [] };
-    }
-  }
+  let data: CommandsJsonSchema = await readCommandsJson(filePath) ?? { commands: [] };
 
   const group = newCommand.group || 'General';
   const exists = data.commands.some(
@@ -184,7 +191,7 @@ export async function addCommandToFile(
     group,
   });
 
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
 export async function moveCommandInFile(
@@ -195,31 +202,17 @@ export async function moveCommandInFile(
   configFileName: string = 'commands-list.json'
 ): Promise<boolean> {
   const filePath = path.join(workspaceRoot, configFileName);
+  const data = await readCommandsJson(filePath);
+  if (!data) return false;
 
-  if (!fs.existsSync(filePath)) {
-    return false;
-  }
+  const cmd = data.commands.find(
+    c => c.name === commandName && (c.group || 'General') === sourceGroup
+  );
+  if (!cmd) return false;
 
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const data: CommandsJsonSchema = JSON.parse(raw);
-    if (!Array.isArray(data.commands)) {
-      return false;
-    }
-
-    const cmd = data.commands.find(
-      c => c.name === commandName && (c.group || 'General') === sourceGroup
-    );
-    if (!cmd) {
-      return false;
-    }
-
-    cmd.group = targetGroup;
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
-    return true;
-  } catch {
-    return false;
-  }
+  cmd.group = targetGroup;
+  await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  return true;
 }
 
 export async function removeGroupFromFile(
@@ -228,28 +221,36 @@ export async function removeGroupFromFile(
   configFileName: string = 'commands-list.json'
 ): Promise<number> {
   const filePath = path.join(workspaceRoot, configFileName);
+  const data = await readCommandsJson(filePath);
+  if (!data) return 0;
 
-  if (!fs.existsSync(filePath)) {
-    return 0;
+  const before = data.commands.length;
+  data.commands = data.commands.filter(cmd => (cmd.group || 'General') !== groupName);
+  const removed = before - data.commands.length;
+
+  if (removed > 0) {
+    await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
   }
 
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const data: CommandsJsonSchema = JSON.parse(raw);
-    if (!Array.isArray(data.commands)) {
-      return 0;
-    }
+  return removed;
+}
 
-    const before = data.commands.length;
-    data.commands = data.commands.filter(cmd => (cmd.group || 'General') !== groupName);
-    const removed = before - data.commands.length;
+export async function removeCommandFromFile(
+  workspaceRoot: string,
+  commandName: string,
+  groupName: string,
+  configFileName: string = 'commands-list.json'
+): Promise<boolean> {
+  const filePath = path.join(workspaceRoot, configFileName);
+  const data = await readCommandsJson(filePath);
+  if (!data) return false;
 
-    if (removed > 0) {
-      fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
-    }
+  const index = data.commands.findIndex(
+    cmd => cmd.name === commandName && (cmd.group || 'General') === groupName
+  );
+  if (index === -1) return false;
 
-    return removed;
-  } catch {
-    return 0;
-  }
+  data.commands.splice(index, 1);
+  await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  return true;
 }

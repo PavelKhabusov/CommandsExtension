@@ -85,12 +85,6 @@
       "group": "React"
     },
     {
-      "name": "Build",
-      "command": "npm run build",
-      "type": "terminal",
-      "group": "React"
-    },
-    {
       "name": "Start",
       "command": "npm start",
       "type": "terminal",

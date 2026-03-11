@@ -4,7 +4,7 @@
 [![Marketplace](https://img.shields.io/visual-studio-marketplace/v/PavelKhabusov.commands-extension?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**One-click command runner for VS Code.** Define commands in JSON or let the extension pick up your `package.json` scripts automatically — then run anything from a sidebar or panel with a single click.
+**One-click command runner for VS Code.** Define commands in JSON or let the extension pick up your `package.json` scripts and `.ps1` files automatically — then run anything from a sidebar or panel with a single click.
 
 > No more switching to the terminal and typing the same commands over and over.
 
@@ -28,17 +28,33 @@ code --install-extension PavelKhabusov.commands-extension
 
 Access your commands from the Activity Bar sidebar or open a dedicated panel via `Ctrl+Shift+P` > **Commands: Open Panel**.
 
+### Search & Filter
+
+Filter commands instantly by typing in the search bar. Matches command names, command text, and group names. Groups auto-expand during search and restore their collapsed state when cleared.
+
+### Context Menu
+
+Right-click any command to access:
+
+| Action | Availability |
+|--------|-------------|
+| Add / Remove from favorites | All commands |
+| Enable / Disable confirmation | All commands |
+| Stop terminal | Commands with active terminal |
+| Move to group | Custom commands only |
+| Delete | Custom commands only |
+
+### Run Confirmation
+
+Enable confirmation for critical commands via the context menu. Protected commands show a lock icon indicator and require a modal confirmation dialog before running.
+
 ### Collapsible Groups
 
-Organize commands into named groups. Collapse/expand individual groups or all at once. Group state is preserved when commands update.
+Organize commands into named groups. Collapse/expand individual groups or all at once. Group state is preserved across sessions. Command count badge appears on hover.
 
 ### Favorites
 
-Star any command to pin it to the **Favorites** group at the top. Favorites persist across sessions.
-
-### Move Commands Between Groups
-
-Right-click any custom command to move it to a different group. The context menu shows all available custom groups. Works only for commands defined in `commands-list.json` (npm scripts stay in their group).
+Star any command to pin it to the **Favorites** group at the top. Use the star button or right-click > "Add to favorites". Favorites persist across sessions.
 
 ### Multiple Shell Types
 
@@ -52,17 +68,23 @@ Right-click any custom command to move it to a different group. The context menu
 
 Click **+** in the toolbar to add new commands without touching JSON. Pick an existing group or create a new one on the fly.
 
-### Terminal Reuse
+### Terminal Management
 
-Re-running a command reuses its existing terminal instead of spawning a new one. Use the **Clear Terminals** button to clean up.
+- Re-running a command reuses its existing terminal
+- Active terminals show a green indicator dot and a close button
+- Stop terminals via the close button, context menu, or the **Clear Terminals** toolbar button
 
-### Auto-Refresh
+### Auto-Detection
 
-File watchers monitor `commands-list.json` and `package.json` — the UI updates instantly when you save changes.
+| Source | Group | Auto-refresh |
+|--------|-------|:------------:|
+| `commands-list.json` | Custom groups | Yes |
+| `package.json` scripts | npm scripts | Yes |
+| `*.ps1` files | PowerShell scripts | Yes |
 
 ### Marketplace Templates
 
-The built-in **Recommended** section offers ready-made command sets for popular stacks:
+The built-in **Recommended** section offers ready-made command sets:
 
 | Template | Description |
 |----------|-------------|
@@ -151,6 +173,10 @@ These appear as `npm run build`, `npm run test`, `npm run start`.
 | `commandsExtension.configFile` | `commands-list.json` | Path to config file (relative to workspace root) |
 
 ---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a full list of changes per version.
 
 ## Requirements
 

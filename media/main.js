@@ -11,6 +11,7 @@
 
 	const clearBtn = document.getElementById('clearBtn');
 	const collapseBtn = document.getElementById('collapseBtn');
+	const searchInput = /** @type {HTMLInputElement|null} */ (document.getElementById('searchInput'));
 
 	let groupsCollapsed = false;
 	/** @type {Set<string>} */
@@ -19,6 +20,7 @@
 	let currentFavorites = /** @type {string[]} */ ([]);
 	let currentGroups = /** @type {{ name: string; source?: string }[]} */ ([]);
 	let activeTerminals = /** @type {string[]} */ ([]);
+	let confirmCommands = /** @type {string[]} */ ([]);
 
 	function saveCollapsedGroups() {
 		vscode.postMessage({ type: 'saveCollapsedGroups', collapsedGroups: Array.from(collapsedGroups) });
@@ -70,6 +72,68 @@
 		refreshBtn.addEventListener('click', () => {
 			vscode.postMessage({ type: 'refresh' });
 		});
+	}
+
+	const searchClearBtn = document.getElementById('searchClearBtn');
+
+	if (searchInput) {
+		searchInput.addEventListener('input', () => {
+			filterCommands(searchInput.value.trim().toLowerCase());
+			if (searchClearBtn) {
+				searchClearBtn.classList.toggle('visible', searchInput.value.length > 0);
+			}
+		});
+	}
+
+	if (searchClearBtn && searchInput) {
+		searchClearBtn.addEventListener('click', () => {
+			searchInput.value = '';
+			searchClearBtn.classList.remove('visible');
+			filterCommands('');
+			searchInput.focus();
+		});
+	}
+
+	function filterCommands(query) {
+		if (!container) return;
+		const groups = container.querySelectorAll('.command-group');
+		for (const group of groups) {
+			const nameEl = group.querySelector('.group-name');
+			const groupName = (nameEl ? nameEl.textContent || '' : '').toLowerCase();
+			const groupMatches = query && groupName.includes(query);
+
+			const items = group.querySelectorAll('.cmd-item');
+			let visibleCount = 0;
+			for (const item of items) {
+				if (item instanceof HTMLElement) {
+					const name = (item.dataset.name || '').toLowerCase();
+					const subtitle = (item.querySelector('.cmd-subtitle') || {}).textContent || '';
+					if (!query || groupMatches || name.includes(query) || subtitle.toLowerCase().includes(query)) {
+						item.style.display = '';
+						visibleCount++;
+					} else {
+						item.style.display = 'none';
+					}
+				}
+			}
+			if (group instanceof HTMLElement) {
+				group.style.display = visibleCount === 0 && query ? 'none' : '';
+			}
+			// Expand groups while searching so results are visible
+			const cmdsEl = group.querySelector('.group-commands');
+			const chevron = group.querySelector('.group-chevron');
+			if (query) {
+				if (cmdsEl) cmdsEl.classList.remove('collapsed');
+				if (chevron) chevron.classList.remove('collapsed');
+			} else {
+				// Restore collapsed state from the saved set
+				const gName = group.classList.contains('favorites-group') ? '__favorites__' : (nameEl ? nameEl.textContent || '' : '');
+				if (collapsedGroups.has(gName)) {
+					if (cmdsEl) cmdsEl.classList.add('collapsed');
+					if (chevron) chevron.classList.add('collapsed');
+				}
+			}
+		}
 	}
 
 	const groupSelect = /** @type {HTMLSelectElement|null} */ (document.getElementById('cmdGroupSelect'));
@@ -183,10 +247,15 @@
 				activeTerminals = message.activeTerminals || [];
 				updateTerminalIndicators();
 				break;
+			case 'updateConfirmCommands':
+				confirmCommands = message.confirmCommands || [];
+				updateConfirmIndicators();
+				break;
 			case 'updateCommands':
 				currentFavorites = message.favorites || [];
 				currentGroups = (message.groups || []).map(function(g) { return { name: g.name, source: g.source }; });
 				activeTerminals = message.activeTerminals || [];
+				confirmCommands = message.confirmCommands || [];
 				if (!collapsedGroupsInitialized && message.collapsedGroups) {
 					for (const name of message.collapsedGroups) {
 						collapsedGroups.add(name);
@@ -231,12 +300,29 @@
 		const item = document.createElement('div');
 		item.className = 'cmd-item';
 		item.dataset.name = cmd.name;
+		item.dataset.commandKey = groupName + ':' + cmd.name;
 
 		// Play icon
 		const icon = document.createElement('span');
 		icon.className = 'cmd-icon';
 		icon.textContent = '\u25B6';
 		item.appendChild(icon);
+
+		// Confirm indicator (SVG key icon)
+		const commandKey = groupName + ':' + cmd.name;
+		const confirmSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		confirmSvg.setAttribute('class', 'cmd-confirm-icon');
+		confirmSvg.setAttribute('width', '7');
+		confirmSvg.setAttribute('height', '7');
+		confirmSvg.setAttribute('viewBox', '0 0 16 16');
+		confirmSvg.setAttribute('fill', 'currentColor');
+		const confirmPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+		confirmPath.setAttribute('d', 'M8 1C6.34 1 5 2.34 5 4v2H3v8h10V6h-2V4c0-1.66-1.34-3-3-3zm0 1.5c.83 0 1.5.67 1.5 1.5v2h-3V4c0-.83.67-1.5 1.5-1.5zM8 9a1 1 0 0 1 .5 1.87V12h-1v-1.13A1 1 0 0 1 8 9z');
+		confirmSvg.appendChild(confirmPath);
+		icon.appendChild(confirmSvg);
+		if (confirmCommands.includes(commandKey)) {
+			item.classList.add('has-confirm');
+		}
 
 		// Info block: name + subtitle
 		const info = document.createElement('div');
@@ -300,8 +386,6 @@
 			e.stopPropagation();
 			vscode.postMessage({ type: 'toggleFavorite', commandKey: groupName + ':' + cmd.name });
 		});
-		item.appendChild(starBtn);
-
 		// Close terminal button (visible only when terminal is active)
 		const closeBtn = document.createElement('button');
 		closeBtn.className = 'cmd-close-btn';
@@ -313,15 +397,19 @@
 		});
 		item.appendChild(closeBtn);
 
+		item.appendChild(starBtn);
+
 		// Apply active terminal indicator if terminal is open
 		if (activeTerminals.includes(cmd.name)) {
 			item.classList.add('has-terminal');
 		}
 
-		// Click to run command
+		// Click to run command (with optional confirmation)
 		item.addEventListener('click', () => {
+			const commandKey = groupName + ':' + cmd.name;
+			const msgType = confirmCommands.includes(commandKey) ? 'confirmRun' : 'runCommand';
 			vscode.postMessage({
-				type: 'runCommand',
+				type: msgType,
 				name: cmd.name,
 				command: cmd.command,
 				shellType: cmd.type,
@@ -329,60 +417,118 @@
 			});
 		});
 
-		// Context menu for moving between custom groups
-		if (groupSource === 'commands-list.json') {
-			item.addEventListener('contextmenu', (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				closeContextMenu();
+		// Context menu for all commands
+		item.addEventListener('contextmenu', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			closeContextMenu();
 
+			const commandKey = groupName + ':' + cmd.name;
+			const menu = document.createElement('div');
+			menu.className = 'context-menu';
+
+			// Toggle favorite
+			const isFav = currentFavorites.includes(commandKey);
+			const favItem = document.createElement('div');
+			favItem.className = 'context-menu-item';
+			favItem.textContent = isFav ? 'Remove from favorites' : 'Add to favorites';
+			favItem.addEventListener('click', (ev) => {
+				ev.stopPropagation();
+				vscode.postMessage({ type: 'toggleFavorite', commandKey: commandKey });
+				closeContextMenu();
+			});
+			menu.appendChild(favItem);
+
+			// Toggle confirmation
+			const hasConfirm = confirmCommands.includes(commandKey);
+			const confirmItem = document.createElement('div');
+			confirmItem.className = 'context-menu-item';
+			confirmItem.textContent = hasConfirm ? 'Disable confirmation' : 'Enable confirmation';
+			confirmItem.addEventListener('click', (ev) => {
+				ev.stopPropagation();
+				vscode.postMessage({ type: 'toggleConfirm', commandKey: commandKey });
+				closeContextMenu();
+			});
+			menu.appendChild(confirmItem);
+
+			// Stop terminal (only if active)
+			if (activeTerminals.includes(cmd.name)) {
+				const stopItem = document.createElement('div');
+				stopItem.className = 'context-menu-item';
+				stopItem.textContent = 'Stop terminal';
+				stopItem.addEventListener('click', (ev) => {
+					ev.stopPropagation();
+					vscode.postMessage({ type: 'closeTerminal', name: cmd.name });
+					closeContextMenu();
+				});
+				menu.appendChild(stopItem);
+			}
+
+			// Custom command actions (Move to + Delete)
+			if (groupSource === 'commands-list.json') {
 				const otherGroups = currentGroups.filter(function(g) {
 					return g.source === 'commands-list.json' && g.name !== groupName;
 				});
-				if (otherGroups.length === 0) return;
 
-				const menu = document.createElement('div');
-				menu.className = 'context-menu';
+				const sep1 = document.createElement('div');
+				sep1.className = 'context-menu-separator';
+				menu.appendChild(sep1);
 
-				const header = document.createElement('div');
-				header.className = 'context-menu-header';
-				header.textContent = 'Move to';
-				menu.appendChild(header);
+				if (otherGroups.length > 0) {
+					const header = document.createElement('div');
+					header.className = 'context-menu-header';
+					header.textContent = 'Move to';
+					menu.appendChild(header);
 
-				for (const g of otherGroups) {
-					const menuItem = document.createElement('div');
-					menuItem.className = 'context-menu-item';
-					menuItem.textContent = g.name;
-					menuItem.addEventListener('click', (ev) => {
-						ev.stopPropagation();
-						vscode.postMessage({
-							type: 'moveCommand',
-							commandName: cmd.name,
-							sourceGroup: groupName,
-							targetGroup: g.name,
+					for (const g of otherGroups) {
+						const menuItem = document.createElement('div');
+						menuItem.className = 'context-menu-item';
+						menuItem.textContent = g.name;
+						menuItem.addEventListener('click', (ev) => {
+							ev.stopPropagation();
+							vscode.postMessage({
+								type: 'moveCommand',
+								commandName: cmd.name,
+								sourceGroup: groupName,
+								targetGroup: g.name,
+							});
+							closeContextMenu();
 						});
-						closeContextMenu();
+						menu.appendChild(menuItem);
+					}
+				}
+
+				const deleteItem = document.createElement('div');
+				deleteItem.className = 'context-menu-item context-menu-item-danger';
+				deleteItem.textContent = 'Delete';
+				deleteItem.addEventListener('click', (ev) => {
+					ev.stopPropagation();
+					vscode.postMessage({
+						type: 'deleteCommand',
+						commandName: cmd.name,
+						sourceGroup: groupName,
 					});
-					menu.appendChild(menuItem);
-				}
+					closeContextMenu();
+				});
+				menu.appendChild(deleteItem);
+			}
 
-				document.body.appendChild(menu);
-				activeContextMenu = menu;
+			document.body.appendChild(menu);
+			activeContextMenu = menu;
 
-				// Position the menu
-				const menuRect = menu.getBoundingClientRect();
-				let top = e.clientY;
-				let left = e.clientX;
-				if (top + menuRect.height > window.innerHeight) {
-					top = window.innerHeight - menuRect.height - 4;
-				}
-				if (left + menuRect.width > window.innerWidth) {
-					left = window.innerWidth - menuRect.width - 4;
-				}
-				menu.style.top = top + 'px';
-				menu.style.left = left + 'px';
-			});
-		}
+			// Position the menu
+			const menuRect = menu.getBoundingClientRect();
+			let top = e.clientY;
+			let left = e.clientX;
+			if (top + menuRect.height > window.innerHeight) {
+				top = window.innerHeight - menuRect.height - 4;
+			}
+			if (left + menuRect.width > window.innerWidth) {
+				left = window.innerWidth - menuRect.width - 4;
+			}
+			menu.style.top = top + 'px';
+			menu.style.left = left + 'px';
+		});
 
 		return item;
 	}
@@ -431,7 +577,7 @@
 
 				const favHeader = document.createElement('div');
 				favHeader.className = 'group-header';
-				favHeader.innerHTML = '<span class="group-chevron">&#x25BC;</span><span class="group-name favorites-star-icon">&#x2605; Favorites</span>';
+				favHeader.innerHTML = '<span class="group-chevron">&#x25BC;</span><span class="group-name favorites-star-icon">&#x2605; Favorites</span><span class="group-count">' + favCommands.length + '</span>';
 
 				const favCommandsEl = document.createElement('div');
 				favCommandsEl.className = 'group-commands';
@@ -486,6 +632,11 @@
 			nameEl.textContent = group.name;
 			header.appendChild(nameEl);
 
+			const countBadge = document.createElement('span');
+			countBadge.className = 'group-count';
+			countBadge.textContent = String(group.commands.length);
+			header.appendChild(countBadge);
+
 			// Delete button for custom groups (from commands-list.json)
 			if (group.source === 'commands-list.json') {
 				const deleteBtn = document.createElement('button');
@@ -533,11 +684,31 @@
 			groupEl.appendChild(commandsEl);
 			container.appendChild(groupEl);
 		}
+
+		// Re-apply search filter after re-render
+		if (searchInput && searchInput.value.trim()) {
+			filterCommands(searchInput.value.trim().toLowerCase());
+		}
 	}
 
 	/**
 	 * @param {string} name
 	 */
+	function updateConfirmIndicators() {
+		if (!container) return;
+		const items = container.querySelectorAll('.cmd-item');
+		for (const item of items) {
+			if (item instanceof HTMLElement) {
+				const key = item.dataset.commandKey || '';
+				if (confirmCommands.includes(key)) {
+					item.classList.add('has-confirm');
+				} else {
+					item.classList.remove('has-confirm');
+				}
+			}
+		}
+	}
+
 	function updateTerminalIndicators() {
 		if (!container) return;
 		const items = container.querySelectorAll('.cmd-item');
