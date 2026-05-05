@@ -590,10 +590,17 @@ body {
 .tpl-group-badge {
 	flex-shrink: 0;
 	font-size: 10px;
-	padding: 1px 6px;
-	border-radius: 2px;
+	padding: 0 5px;
+	line-height: 16px;
+	border-radius: 8px;
 	background-color: var(--vscode-badge-background);
 	color: var(--vscode-badge-foreground);
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.tpl-group-header:hover .tpl-group-badge {
+	opacity: 1;
 }
 
 .tpl-group-add {
@@ -858,6 +865,413 @@ body {
 }
 
 .cmd-close-btn:hover {
+	background-color: var(--vscode-list-hoverBackground);
+	color: var(--vscode-errorForeground);
+}
+
+/* ── Marketplace hint badge ── */
+
+.marketplace-hint {
+	margin-left: 8px;
+	padding: 1px 6px;
+	font-size: 9px;
+	font-weight: 600;
+	letter-spacing: 0.4px;
+	text-transform: uppercase;
+	border-radius: 8px;
+	background-color: var(--vscode-button-secondaryBackground, var(--vscode-badge-background));
+	color: var(--vscode-button-secondaryForeground, var(--vscode-badge-foreground));
+	opacity: 0.6;
+	flex-shrink: 0;
+}
+
+.marketplace-header:hover .marketplace-hint {
+	opacity: 1;
+}
+
+/* ── Server Uploads (bottom panel) ── */
+
+#uploads-wrapper {
+	flex-shrink: 0;
+	height: 20vh;
+	min-height: 15vh;
+	max-height: 80vh;
+	overflow-y: auto;
+	border-top: 1px solid var(--vscode-panel-border);
+}
+
+#uploads-wrapper.collapsed {
+	height: auto;
+	min-height: auto;
+}
+
+.uploads-resize-handle {
+	height: 4px;
+	cursor: ns-resize;
+	background: transparent;
+	position: sticky;
+	top: 0;
+	z-index: 11;
+}
+
+.uploads-resize-handle:hover,
+.uploads-resize-handle.active {
+	background-color: var(--vscode-focusBorder);
+}
+
+.uploads-section {
+	margin: 0;
+	padding: 0;
+}
+
+.uploads-header {
+	display: flex;
+	align-items: center;
+	cursor: pointer;
+	padding: 4px 10px;
+	user-select: none;
+	gap: 4px;
+	position: sticky;
+	top: 4px;
+	background-color: var(--vscode-editor-background);
+	z-index: 10;
+}
+
+.uploads-header:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.uploads-chevron {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	font-size: 10px;
+	transition: transform 0.15s ease;
+}
+
+.uploads-chevron.collapsed {
+	transform: rotate(-90deg);
+}
+
+.uploads-title {
+	flex: 1;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.uploads-count {
+	flex-shrink: 0;
+	font-size: 10px;
+	padding: 0 5px;
+	border-radius: 8px;
+	background-color: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+	line-height: 16px;
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.uploads-header:hover .uploads-count {
+	opacity: 1;
+}
+
+.uploads-edit-btn {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.uploads-header:hover .uploads-edit-btn {
+	opacity: 1;
+}
+
+.uploads-edit-btn:hover {
+	background-color: var(--vscode-list-hoverBackground);
+	color: var(--vscode-editor-foreground);
+}
+
+.uploads-body {
+	display: flex;
+	flex-direction: column;
+}
+
+.uploads-body.collapsed {
+	display: none;
+}
+
+.uploads-empty {
+	padding: 10px 16px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	font-style: italic;
+}
+
+.uploads-empty code {
+	font-style: normal;
+	background-color: var(--vscode-textCodeBlock-background);
+	padding: 1px 5px;
+	border-radius: 3px;
+	font-size: 11px;
+}
+
+.uploads-empty-icon {
+	display: inline-block;
+	font-style: normal;
+	padding: 0 4px;
+	border-radius: 3px;
+	background-color: var(--vscode-button-secondaryBackground, var(--vscode-badge-background));
+	color: var(--vscode-button-secondaryForeground, var(--vscode-badge-foreground));
+	font-weight: 600;
+}
+
+.uploads-group-name {
+	padding: 4px 10px 2px 14px;
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground);
+	text-transform: uppercase;
+	letter-spacing: 0.4px;
+	opacity: 0.7;
+}
+
+.upload-item {
+	display: flex;
+	align-items: flex-start;
+	padding: 4px 8px 4px 14px;
+	cursor: pointer;
+	border-left: 2px solid transparent;
+	gap: 4px;
+	min-height: 38px;
+	position: relative;
+}
+
+.upload-item:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.upload-item.upload-running {
+	border-left-color: var(--vscode-progressBar-background);
+}
+
+.upload-item.upload-running .upload-icon {
+	animation: pulse 1s ease-in-out infinite;
+}
+
+.upload-item.upload-done {
+	border-left-color: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.upload-item.upload-error {
+	border-left-color: var(--vscode-errorForeground);
+}
+
+.upload-icon {
+	flex-shrink: 0;
+	width: 16px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	text-align: center;
+	padding-top: 2px;
+}
+
+.upload-item:hover .upload-icon {
+	color: var(--vscode-editor-foreground);
+}
+
+.upload-info {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.upload-top {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.upload-name {
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.upload-proto {
+	flex-shrink: 0;
+	font-size: 9px;
+	font-weight: 600;
+	letter-spacing: 0.4px;
+	text-transform: uppercase;
+	padding: 1px 5px;
+	border-radius: 2px;
+	background-color: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+}
+
+.upload-subtitle {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.upload-status {
+	margin-top: 2px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.upload-status:empty {
+	display: none;
+}
+
+.upload-progress {
+	height: 3px;
+	background-color: var(--vscode-progressBar-background, rgba(127, 127, 127, 0.2));
+	border-radius: 2px;
+	overflow: hidden;
+	opacity: 0.4;
+}
+
+.upload-progress-fill {
+	height: 100%;
+	background-color: var(--vscode-progressBar-background, var(--vscode-focusBorder));
+	opacity: 1;
+	transition: width 0.15s ease;
+}
+
+.upload-progress-text {
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground);
+	font-family: var(--vscode-editor-font-family);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.upload-last {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.upload-last-error {
+	color: var(--vscode-errorForeground);
+}
+
+.upload-unresolved {
+	color: var(--vscode-errorForeground);
+	font-style: italic;
+}
+
+.upload-items-badge {
+	flex-shrink: 0;
+	font-size: 10px;
+	padding: 0 5px;
+	min-width: 18px;
+	height: 18px;
+	line-height: 18px;
+	text-align: center;
+	border-radius: 9px;
+	background-color: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+	margin-top: 5px;
+	cursor: help;
+	box-sizing: border-box;
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.upload-item:hover .upload-items-badge {
+	opacity: 1;
+}
+
+.upload-btn-group {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 1px;
+	margin-top: 2px;
+}
+
+.upload-add-btn,
+.upload-exclude-btn {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	padding: 3px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.1s, color 0.1s, background-color 0.1s;
+	line-height: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.upload-add-btn:hover {
+	color: var(--vscode-testing-iconPassed, #73c991);
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.upload-exclude-btn:hover {
+	color: var(--vscode-errorForeground);
+	background-color: var(--vscode-list-hoverBackground);
+}
+
+.upload-item:hover .upload-add-btn,
+.upload-item:hover .upload-exclude-btn,
+.upload-item:hover .upload-btn-group > button {
+	opacity: 1;
+}
+
+.upload-cancel-btn {
+	flex-shrink: 0;
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+	line-height: 1;
+	margin-top: 2px;
+	display: none;
+}
+
+.upload-item.upload-running .upload-cancel-btn {
+	display: inline-flex;
+}
+
+.upload-item.upload-running .upload-add-btn,
+.upload-item.upload-running .upload-exclude-btn {
+	display: none;
+}
+
+.upload-cancel-btn:hover {
 	background-color: var(--vscode-list-hoverBackground);
 	color: var(--vscode-errorForeground);
 }

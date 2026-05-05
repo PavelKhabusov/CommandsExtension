@@ -1,0 +1,47 @@
+{
+  "servers": [
+    {
+      "name": "main",
+      "protocol": "ftp",
+      "host": "example.com",
+      "port": 21,
+      "user": "username",
+      "password": "your-password"
+    },
+    {
+      "name": "staging",
+      "protocol": "sftp",
+      "host": "staging.example.com",
+      "port": 22,
+      "user": "deploy",
+      "password": "another-password"
+    }
+  ],
+  "uploads": [
+    {
+      "name": "Theme → prod",
+      "server": "main",
+      "remoteDir": "/public_html/wp-content/themes/mytheme/",
+      "items": ["./wp-content/themes/mytheme/"],
+      "exclude": [
+        "**/node_modules/**",
+        "**/*.log",
+        "**/.git/**"
+      ],
+      "onExists": "overwrite"
+    },
+    {
+      "name": "Single file → prod",
+      "server": "main",
+      "remoteDir": "/public_html/",
+      "items": ["./bundle/app.js"]
+    },
+    {
+      "name": "Static site → staging",
+      "server": "staging",
+      "remoteDir": "/var/www/staging/",
+      "items": ["./dist/"],
+      "exclude": ["**/*.map"]
+    }
+  ]
+}

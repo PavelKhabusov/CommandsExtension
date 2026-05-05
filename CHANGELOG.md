@@ -2,6 +2,22 @@
 
 All notable changes to Commands Extension are documented here.
 
+## [0.0.13] - 2026-05-05
+
+### Added
+- **Server Uploads** — new section between commands and Recommended for FTP / FTPS / SFTP file uploads. Define per-project targets in `server-uploads.local.json`; click an entry to upload, watch live progress (%, current file, transfer speed), cancel mid-flight.
+- **Cross-platform** — pure-JS `basic-ftp` and `ssh2-sftp-client` libraries, no FileZilla CLI or external tools required.
+- **Shared servers** — top-level `servers` array; uploads reference a server by `server: "name"` instead of duplicating host / user / password.
+- **`exclude` patterns** — per-upload glob patterns (e.g. `**/node_modules/**`, `**/*.log`) to skip files inside uploaded folders.
+- **Files and folders** — items can be individual files, full directories (uploaded recursively), or glob patterns.
+- **Interactive item picking** — folder-with-plus button on each upload opens a native file/folder picker; selections are appended to the config.
+- **Passwords in config** — passwords live alongside server definitions in the JSON; the default `.local.json` filename keeps it out of git for most ignore presets.
+- **Edit/create config from UI** — pencil/plus icon next to the section header opens or creates `server-uploads.local.json`.
+
+### Changed
+- **Recommended section collapsed by default** — to keep the sidebar focused; a small "templates" hint badge nudges discovery without distraction.
+- **`uploadsFile` setting** — new `commandsExtension.uploadsFile` config (default `server-uploads.local.json`, kept out of git by `.local.json` ignore patterns).
+
 ## [0.0.12] - 2026-03-11
 
 ### Added

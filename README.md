@@ -1,6 +1,6 @@
 # Commands Extension
 
-[![Version](https://img.shields.io/badge/version-0.0.12-blue)](https://github.com/PavelKhabusov/CommandsExtension/releases)
+[![Version](https://img.shields.io/badge/version-0.0.13-blue)](https://github.com/PavelKhabusov/CommandsExtension/releases)
 [![Marketplace](https://img.shields.io/visual-studio-marketplace/v/PavelKhabusov.commands-extension?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -81,6 +81,79 @@ Click **+** in the toolbar to add new commands without touching JSON. Pick an ex
 | `commands-list.json` | Custom groups | Yes |
 | `package.json` scripts | npm scripts | Yes |
 | `*.ps1` files | PowerShell scripts | Yes |
+
+### Server Uploads
+
+Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.json` and run them with one click — no FileZilla CLI required, works on Linux, macOS, and Windows.
+
+- **Live progress** — percentage, current file, transfer speed, files done / total
+- **Cancel mid-flight** — stop button on running uploads
+- **Files, folders, globs** — single files, recursive folder uploads, or glob patterns
+- **Per-upload `exclude`** — skip files inside an uploaded folder (e.g. `**/node_modules/**`)
+- **Shared `servers`** — define a server once, reference it from many uploads
+- **Interactive picker** — folder-with-plus button opens a native file/folder dialog and appends selections to the config
+- **`.local.json` by default** — the default filename is excluded by common gitignore patterns so credentials stay out of git
+
+```json
+{
+  "servers": [
+    {
+      "name": "main",
+      "protocol": "ftp",
+      "host": "example.com",
+      "port": 21,
+      "user": "username",
+      "password": "your-password"
+    }
+  ],
+  "uploads": [
+    {
+      "name": "Theme → prod",
+      "server": "main",
+      "remoteDir": "/public_html/wp-content/themes/mytheme/",
+      "items": ["./wp-content/themes/mytheme/"],
+      "exclude": ["**/node_modules/**", "**/*.log"],
+      "onExists": "overwrite"
+    },
+    {
+      "name": "Single file → prod",
+      "server": "main",
+      "remoteDir": "/public_html/",
+      "items": ["./bundle/app.js"]
+    }
+  ]
+}
+```
+
+#### `servers` entry
+
+| Field | Type | Required | Description |
+|-------|------|:--------:|-------------|
+| `name` | string | yes | Reference name used by uploads |
+| `protocol` | `"ftp"` \| `"ftps"` \| `"sftp"` | yes | Connection protocol |
+| `host` | string | yes | Server hostname or IP |
+| `port` | number | no | Defaults: 21 (FTP/FTPS), 22 (SFTP) |
+| `user` | string | yes | Username |
+| `password` | string | no | Password. If omitted, you'll be prompted at upload time (not saved) |
+
+#### `uploads` entry
+
+| Field | Type | Required | Description |
+|-------|------|:--------:|-------------|
+| `name` | string | yes | Display name in the UI |
+| `group` | string | no | Group name (default: `"Uploads"`) |
+| `server` | string | conditional | Reference to a `servers` entry. Required unless inline `host`/`user`/`protocol` are set |
+| `protocol` / `host` / `port` / `user` / `password` | — | conditional | Inline server fields (override or replace `server`) |
+| `remoteDir` | string | yes | Remote directory (absolute path) |
+| `items` | string[] | yes | Files, folders, or globs (relative to workspace root) |
+| `exclude` | string[] | no | Glob patterns to skip during folder/glob expansion |
+| `onExists` | `"overwrite"` \| `"skip"` | no | Behavior on file collision (default: `"overwrite"`) |
+
+Right-click an upload for context menu actions: edit config, add files.
+
+> **Passwords are stored in plain text inside `server-uploads.local.json`.** The default filename is `.local.json` so most gitignore presets exclude it. If you use a different filename, add it to `.gitignore` yourself.
+
+> **Proxy / VPN note:** uploads use raw TCP sockets; HTTP proxy settings (system or VS Code) are not applied. System-level VPN tunnels are honored transparently by the OS — bypassing them requires VPN-level split tunneling.
 
 ### Marketplace Templates
 
@@ -170,7 +243,8 @@ These appear as `npm run build`, `npm run test`, `npm run start`.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `commandsExtension.configFile` | `commands-list.json` | Path to config file (relative to workspace root) |
+| `commandsExtension.configFile` | `commands-list.json` | Path to commands config file (relative to workspace root) |
+| `commandsExtension.uploadsFile` | `server-uploads.local.json` | Path to server uploads config file (relative to workspace root) |
 
 ---
 

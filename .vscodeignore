@@ -5,9 +5,9 @@
 .gitignore
 .ralphrc
 src/
-node_modules/
 tsconfig.json
 commands-list.example.json
+server-uploads.example.json
 ralph-run.sh
 test-project/
 **/*.ts

@@ -1,0 +1,27 @@
+{
+  "servers": [
+    {
+      "name": "demo",
+      "protocol": "ftp",
+      "host": "ftp.example.com",
+      "port": 21,
+      "user": "demo-user",
+      "password": "demo-password"
+    }
+  ],
+  "uploads": [
+    {
+      "name": "Single file",
+      "server": "demo",
+      "remoteDir": "/public_html/",
+      "items": ["./package.json"]
+    },
+    {
+      "name": "Whole folder",
+      "server": "demo",
+      "remoteDir": "/public_html/dump/",
+      "items": ["./"],
+      "exclude": ["**/*.log", "node_modules", "node_modules/**"]
+    }
+  ]
+}

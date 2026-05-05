@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { getWebviewHtml, WebviewMessageHandler, sendCommandsToWebview, sendActiveTerminals } from './webviewBase';
+import { getWebviewHtml, WebviewMessageHandler, sendCommandsToWebview, sendActiveTerminals, sendUploadProgress } from './webviewBase';
 import { TerminalManager } from './terminalManager';
+import { uploadProgressBus } from './extension';
 
 export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'commandsExtension.sidebarView';
@@ -36,6 +37,13 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 				sendActiveTerminals((msg) => this._view!.webview.postMessage(msg));
 			}
 		});
+
+		const progressSub = uploadProgressBus.subscribe((p) => {
+			if (this._view) {
+				sendUploadProgress((msg) => this._view!.webview.postMessage(msg), p);
+			}
+		});
+		webviewView.onDidDispose(() => progressSub.dispose());
 	}
 
 	public async refresh(): Promise<void> {

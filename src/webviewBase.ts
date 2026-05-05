@@ -3,6 +3,9 @@ import { CommandDefinition } from './types';
 import { loadCommands, addCommandToFile, moveCommandInFile, removeGroupFromFile, removeCommandFromFile } from './commandsProvider';
 import { getMarketplaceTemplates } from './marketplace';
 import { TerminalManager } from './terminalManager';
+import { loadUploads, uploadKey, pickFilesAndAppend, addUploadItems, addUploadExcludes, pickExcludePatternsForUpload, ensureUploadsFile, resolveServer } from './uploadsProvider';
+import { uploadRunner } from './extension';
+import { UploadDefinition, ServerDefinition } from './uploadsTypes';
 
 export function getNonce(): string {
 	let text = '';
@@ -89,6 +92,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 			<p>Add a <code>commands-list.json</code> file or <code>package.json</code> scripts to your workspace.</p>
 		</div>
 	</div>
+	<div id="uploads-wrapper"></div>
 	<div id="marketplace-wrapper"></div>
 	<script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
@@ -97,6 +101,10 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 
 function getConfigFile(): string {
 	return vscode.workspace.getConfiguration('commandsExtension').get<string>('configFile', 'commands-list.json');
+}
+
+function getUploadsFile(): string {
+	return vscode.workspace.getConfiguration('commandsExtension').get<string>('uploadsFile', 'server-uploads.local.json');
 }
 
 export class WebviewMessageHandler {
@@ -115,6 +123,12 @@ export class WebviewMessageHandler {
 				if (message.collapsedGroups) {
 					await this._setCollapsedGroups(message.collapsedGroups as string[]);
 				}
+				break;
+			case 'setMarketplaceCollapsed':
+				await this._context.workspaceState.update('commandsExtension.marketplaceCollapsed', !!message.value);
+				break;
+			case 'setUploadsCollapsed':
+				await this._context.workspaceState.update('commandsExtension.uploadsCollapsed', !!message.value);
 				break;
 			case 'toggleFavorite': {
 				if (!message.commandKey) return;
@@ -233,7 +247,85 @@ export class WebviewMessageHandler {
 			case 'refresh':
 				this._refresh();
 				break;
+			case 'runUpload': {
+				const upload = this._findUpload(message.uploadName as string, message.uploadGroup as string);
+				if (!upload || !uploadRunner) return;
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot) return;
+				const resolved = resolveServer(upload, this._cachedServers);
+				if (!resolved) {
+					vscode.window.showErrorMessage(
+						`Upload "${upload.name}" is missing server config. Define inline (host/user/protocol) or reference a "servers" entry.`
+					);
+					return;
+				}
+				uploadRunner.run(wsRoot, resolved).catch((e) => {
+					vscode.window.showErrorMessage(`Upload failed: ${e instanceof Error ? e.message : e}`);
+				});
+				break;
+			}
+			case 'cancelUpload': {
+				if (!uploadRunner) return;
+				const key = `${(message.uploadGroup as string) || 'Uploads'}:${message.uploadName as string}`;
+				uploadRunner.cancel(key);
+				break;
+			}
+			case 'pickUploadItems': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot) return;
+				const newItems = await pickFilesAndAppend(wsRoot);
+				if (newItems.length === 0) return;
+				await addUploadItems(
+					wsRoot,
+					getUploadsFile(),
+					message.uploadName as string,
+					(message.uploadGroup as string) || 'Uploads',
+					newItems
+				);
+				this._refresh();
+				break;
+			}
+			case 'pickUploadExcludes': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot) return;
+				const upload = this._findUpload(message.uploadName as string, message.uploadGroup as string);
+				if (!upload) return;
+				const patterns = await pickExcludePatternsForUpload(wsRoot, upload);
+				if (patterns.length === 0) return;
+				await addUploadExcludes(
+					wsRoot,
+					getUploadsFile(),
+					upload.name,
+					upload.group || 'Uploads',
+					patterns
+				);
+				this._refresh();
+				break;
+			}
+			case 'editUploadsFile': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot) return;
+				const uri = await ensureUploadsFile(wsRoot, getUploadsFile());
+				const doc = await vscode.workspace.openTextDocument(uri);
+				await vscode.window.showTextDocument(doc);
+				break;
+			}
 		}
+	}
+
+	private _cachedUploads: UploadDefinition[] = [];
+	private _cachedServers: ServerDefinition[] = [];
+
+	public setCachedUploads(uploads: UploadDefinition[], servers: ServerDefinition[]): void {
+		this._cachedUploads = uploads;
+		this._cachedServers = servers;
+	}
+
+	private _findUpload(name: string, group: string): UploadDefinition | undefined {
+		const groupName = group || 'Uploads';
+		return this._cachedUploads.find(
+			(u) => u.name === name && (u.group || 'Uploads') === groupName
+		);
 	}
 
 	public getFavorites(): string[] {
@@ -246,6 +338,14 @@ export class WebviewMessageHandler {
 
 	public getConfirmCommands(): string[] {
 		return this._context.workspaceState.get<string[]>('commandsExtension.confirmCommands', []);
+	}
+
+	public getMarketplaceCollapsed(): boolean | undefined {
+		return this._context.workspaceState.get<boolean>('commandsExtension.marketplaceCollapsed');
+	}
+
+	public getUploadsCollapsed(): boolean | undefined {
+		return this._context.workspaceState.get<boolean>('commandsExtension.uploadsCollapsed');
 	}
 
 	private async _setFavorites(favorites: string[]): Promise<void> {
@@ -337,9 +437,58 @@ export async function sendCommandsToWebview(
 	const activeTerminals = TerminalManager.getInstance().getActiveCommandNames();
 	postMessage({ type: 'updateCommands', groups, favorites, collapsedGroups, confirmCommands, activeTerminals });
 	postMessage({ type: 'updateMarketplace', templates: getMarketplaceTemplates() });
+
+	const { groups: uploadGroups, servers } = await loadUploads(workspaceRoot, getUploadsFile());
+	const flatUploads: UploadDefinition[] = [];
+	for (const g of uploadGroups) for (const u of g.uploads) flatUploads.push(u);
+	handler.setCachedUploads(flatUploads, servers);
+
+	const displayGroups = uploadGroups.map((g) => ({
+		name: g.name,
+		uploads: g.uploads.map((u) => {
+			const resolved = resolveServer(u, servers);
+			if (!resolved) {
+				return { ...u, _unresolved: true };
+			}
+			return {
+				...u,
+				protocol: resolved.protocol,
+				host: resolved.host,
+				port: resolved.port,
+				user: resolved.user,
+			};
+		}),
+	}));
+
+	const lastStatuses = uploadRunner ? uploadRunner.getLastStatuses() : [];
+	const activeKeys: string[] = [];
+	if (uploadRunner) {
+		for (const u of flatUploads) {
+			const key = uploadKey(u);
+			if (uploadRunner.isRunning(key)) activeKeys.push(key);
+		}
+	}
+	const marketplaceCollapsed = handler.getMarketplaceCollapsed();
+	const uploadsCollapsed = handler.getUploadsCollapsed();
+	postMessage({
+		type: 'updateUploads',
+		groups: displayGroups,
+		statuses: lastStatuses,
+		activeKeys,
+		uploadsCollapsed,
+	});
+	postMessage({
+		type: 'updateSectionCollapse',
+		marketplaceCollapsed,
+		uploadsCollapsed,
+	});
 }
 
 export function sendActiveTerminals(postMessage: (msg: unknown) => void): void {
 	const activeTerminals = TerminalManager.getInstance().getActiveCommandNames();
 	postMessage({ type: 'updateActiveTerminals', activeTerminals });
+}
+
+export function sendUploadProgress(postMessage: (msg: unknown) => void, progress: unknown): void {
+	postMessage({ type: 'uploadProgress', progress });
 }

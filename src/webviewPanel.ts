@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { getWebviewHtml, WebviewMessageHandler, sendCommandsToWebview, sendActiveTerminals } from './webviewBase';
+import { getWebviewHtml, WebviewMessageHandler, sendCommandsToWebview, sendActiveTerminals, sendUploadProgress } from './webviewBase';
 import { TerminalManager } from './terminalManager';
+import { uploadProgressBus } from './extension';
 
 export class CommandsPanel {
 	public static currentPanel: CommandsPanel | undefined;
@@ -60,6 +61,11 @@ export class CommandsPanel {
 		TerminalManager.getInstance().onDidChange(() => {
 			sendActiveTerminals((msg) => this._panel.webview.postMessage(msg));
 		});
+
+		const progressSub = uploadProgressBus.subscribe((p) => {
+			sendUploadProgress((msg) => this._panel.webview.postMessage(msg), p);
+		});
+		this._disposables.push(progressSub);
 	}
 
 	public dispose(): void {

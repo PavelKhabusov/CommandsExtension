@@ -2,9 +2,28 @@ import * as vscode from 'vscode';
 import { CommandsPanel } from './webviewPanel';
 import { CommandsSidebarProvider } from './sidebarProvider';
 import { TerminalManager } from './terminalManager';
+import { UploadRunner } from './uploadRunner';
+import { UploadProgress } from './uploadsTypes';
+
+type ProgressListener = (p: UploadProgress) => void;
+
+class UploadProgressBus {
+  private readonly _listeners = new Set<ProgressListener>();
+  emit(p: UploadProgress): void {
+    for (const l of this._listeners) l(p);
+  }
+  subscribe(l: ProgressListener): vscode.Disposable {
+    this._listeners.add(l);
+    return new vscode.Disposable(() => this._listeners.delete(l));
+  }
+}
+
+export const uploadProgressBus = new UploadProgressBus();
+export let uploadRunner: UploadRunner | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  // Register the editor panel command
+  uploadRunner = new UploadRunner((p) => uploadProgressBus.emit(p));
+
   const openPanelCommand = vscode.commands.registerCommand(
     'commandsExtension.openPanel',
     () => {
@@ -13,7 +32,6 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(openPanelCommand);
 
-  // Register the sidebar webview provider
   const sidebarProvider = new CommandsSidebarProvider(context.extensionUri, context);
   const sidebarRegistration = vscode.window.registerWebviewViewProvider(
     CommandsSidebarProvider.viewType,
@@ -21,44 +39,38 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(sidebarRegistration);
 
-  // Register terminal manager disposables for cleanup
   context.subscriptions.push(...TerminalManager.getInstance().getDisposables());
 
-  // Watch for changes to commands-list.json and package.json
   if (vscode.workspace.workspaceFolders) {
-    const configFile = vscode.workspace.getConfiguration('commandsExtension').get<string>('configFile', 'commands-list.json');
+    const config = vscode.workspace.getConfiguration('commandsExtension');
+    const configFile = config.get<string>('configFile', 'commands-list.json');
+    const uploadsFile = config.get<string>('uploadsFile', 'server-uploads.local.json');
 
     const commandsWatcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], configFile)
     );
-
     const packageWatcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], 'package.json')
     );
-
-    const onFileChange = () => {
-      // Refresh both the editor panel and the sidebar
-      CommandsPanel.refresh();
-      sidebarProvider.refresh();
-    };
-
-    commandsWatcher.onDidChange(onFileChange);
-    commandsWatcher.onDidCreate(onFileChange);
-    commandsWatcher.onDidDelete(onFileChange);
-
-    packageWatcher.onDidChange(onFileChange);
-    packageWatcher.onDidCreate(onFileChange);
-    packageWatcher.onDidDelete(onFileChange);
-
+    const uploadsWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], uploadsFile)
+    );
     const ps1Watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], '*.ps1')
     );
 
-    ps1Watcher.onDidChange(onFileChange);
-    ps1Watcher.onDidCreate(onFileChange);
-    ps1Watcher.onDidDelete(onFileChange);
+    const onFileChange = () => {
+      CommandsPanel.refresh();
+      sidebarProvider.refresh();
+    };
 
-    context.subscriptions.push(commandsWatcher, packageWatcher, ps1Watcher);
+    for (const w of [commandsWatcher, packageWatcher, uploadsWatcher, ps1Watcher]) {
+      w.onDidChange(onFileChange);
+      w.onDidCreate(onFileChange);
+      w.onDidDelete(onFileChange);
+    }
+
+    context.subscriptions.push(commandsWatcher, packageWatcher, uploadsWatcher, ps1Watcher);
   }
 }
 

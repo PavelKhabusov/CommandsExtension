@@ -57,6 +57,11 @@
           "type": "string",
           "default": "commands-list.json",
           "description": "Path to commands configuration file (relative to workspace root)"
+        },
+        "commandsExtension.uploadsFile": {
+          "type": "string",
+          "default": "server-uploads.local.json",
+          "description": "Path to server uploads configuration file (relative to workspace root). The default name ends with .local.json so it stays out of git when matched by common ignore patterns."
         }
       }
     }
@@ -74,8 +79,13 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/ssh2-sftp-client": "^9.0.6",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.7.1",
     "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "basic-ftp": "^5.0.5",
+    "ssh2-sftp-client": "^11.0.0"
   }
 }

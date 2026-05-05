@@ -21,6 +21,13 @@
 	let currentGroups = /** @type {{ name: string; source?: string }[]} */ ([]);
 	let activeTerminals = /** @type {string[]} */ ([]);
 	let confirmCommands = /** @type {string[]} */ ([]);
+	/** @type {Map<string, any>} */
+	const uploadStatusMap = new Map();
+	/** @type {Set<string>} */
+	const uploadActiveKeys = new Set();
+	let lastUploadGroups = /** @type {any[]} */ ([]);
+	let marketplaceCollapsed = /** @type {boolean | undefined} */ (undefined);
+	let uploadsCollapsed = /** @type {boolean | undefined} */ (undefined);
 
 	function saveCollapsedGroups() {
 		vscode.postMessage({ type: 'saveCollapsedGroups', collapsedGroups: Array.from(collapsedGroups) });
@@ -270,6 +277,38 @@
 			case 'updateMarketplace':
 				renderMarketplace(message.templates);
 				break;
+			case 'updateUploads':
+				lastUploadGroups = message.groups || [];
+				if (Array.isArray(message.statuses)) {
+					uploadStatusMap.clear();
+					for (const s of message.statuses) {
+						if (s && s.uploadKey) uploadStatusMap.set(s.uploadKey, s);
+					}
+				}
+				if (Array.isArray(message.activeKeys)) {
+					uploadActiveKeys.clear();
+					for (const k of message.activeKeys) uploadActiveKeys.add(k);
+				}
+				renderUploads();
+				break;
+			case 'updateSectionCollapse':
+				marketplaceCollapsed = message.marketplaceCollapsed;
+				uploadsCollapsed = message.uploadsCollapsed;
+				applyMarketplaceCollapseState();
+				applyUploadsCollapseState();
+				break;
+			case 'uploadProgress': {
+				const p = message.progress;
+				if (!p || !p.uploadKey) break;
+				uploadStatusMap.set(p.uploadKey, p);
+				if (p.status === 'connecting' || p.status === 'running') {
+					uploadActiveKeys.add(p.uploadKey);
+				} else {
+					uploadActiveKeys.delete(p.uploadKey);
+				}
+				updateUploadCardStatus(p.uploadKey);
+				break;
+			}
 		}
 	});
 
@@ -832,6 +871,13 @@
 		const body = document.createElement('div');
 		body.className = 'marketplace-body';
 
+		// Add subtle hint badge so users notice the section even when collapsed
+		const hint = document.createElement('span');
+		hint.className = 'marketplace-hint';
+		hint.title = 'Browse ready-made command templates';
+		hint.textContent = 'templates';
+		header.appendChild(hint);
+
 		let savedHeight = '';
 		header.addEventListener('click', () => {
 			const chevron = header.querySelector('.marketplace-chevron');
@@ -845,6 +891,7 @@
 				wrapper.style.height = savedHeight;
 			}
 			wrapper.classList.toggle('collapsed');
+			vscode.postMessage({ type: 'setMarketplaceCollapsed', value: wrapper.classList.contains('collapsed') });
 		});
 
 		for (const tpl of templates) {
@@ -875,13 +922,7 @@
 
 			groupHeader.appendChild(info);
 
-			// Badge with command count
-			const badge = document.createElement('span');
-			badge.className = 'tpl-group-badge';
-			badge.textContent = String(tpl.commands.length);
-			groupHeader.appendChild(badge);
-
-			// Add all button
+			// Add all button (left of badge)
 			const addAllBtn = document.createElement('button');
 			addAllBtn.className = 'tpl-group-add';
 			addAllBtn.textContent = '+';
@@ -891,6 +932,12 @@
 				vscode.postMessage({ type: 'addTemplateGroup', groupId: tpl.id });
 			});
 			groupHeader.appendChild(addAllBtn);
+
+			// Badge with command count (right of button, hover-only)
+			const badge = document.createElement('span');
+			badge.className = 'tpl-group-badge';
+			badge.textContent = String(tpl.commands.length);
+			groupHeader.appendChild(badge);
 
 			// Hover tooltip with delay
 			let tooltipTimer = /** @type {number|undefined} */ (undefined);
@@ -974,16 +1021,436 @@
 		section.appendChild(body);
 
 		wrapper.appendChild(section);
+
+		applyMarketplaceCollapseState();
 	}
 
 	// Hide all tooltips on scroll
-	document.querySelectorAll('#main-content, #marketplace-wrapper').forEach(function(el) {
+	document.querySelectorAll('#main-content, #uploads-wrapper, #marketplace-wrapper').forEach(function(el) {
 		el.addEventListener('scroll', function() {
 			document.querySelectorAll('.cmd-tooltip.visible, .tpl-tooltip.visible').forEach(function(t) {
 				t.classList.remove('visible');
 			});
 		});
 	});
+
+	// ── Server Uploads ────────────────────────────────────────────────────
+
+	function uploadKeyOf(group, name) {
+		return (group || 'Uploads') + ':' + name;
+	}
+
+	function formatBytesShort(n) {
+		if (!n && n !== 0) return '';
+		if (n < 1024) return n + ' B';
+		if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+		if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+		return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+	}
+
+	function applyMarketplaceCollapseState() {
+		const wrapper = document.getElementById('marketplace-wrapper');
+		if (!wrapper) return;
+		const body = wrapper.querySelector('.marketplace-body');
+		const chevron = wrapper.querySelector('.marketplace-chevron');
+		const shouldCollapse = marketplaceCollapsed === undefined ? true : marketplaceCollapsed;
+		if (!body || !chevron) return;
+		if (shouldCollapse) {
+			body.classList.add('collapsed');
+			chevron.classList.add('collapsed');
+			wrapper.classList.add('collapsed');
+		} else {
+			body.classList.remove('collapsed');
+			chevron.classList.remove('collapsed');
+			wrapper.classList.remove('collapsed');
+		}
+	}
+
+	function applyUploadsCollapseState() {
+		const wrapper = document.getElementById('uploads-wrapper');
+		if (!wrapper) return;
+		const body = wrapper.querySelector('.uploads-body');
+		const chevron = wrapper.querySelector('.uploads-chevron');
+		if (!body || !chevron) return;
+		const hasUploads = lastUploadGroups && lastUploadGroups.length > 0;
+		const shouldCollapse = uploadsCollapsed === undefined ? !hasUploads : uploadsCollapsed;
+		if (shouldCollapse) {
+			body.classList.add('collapsed');
+			chevron.classList.add('collapsed');
+			wrapper.classList.add('collapsed');
+		} else {
+			body.classList.remove('collapsed');
+			chevron.classList.remove('collapsed');
+			wrapper.classList.remove('collapsed');
+		}
+	}
+
+	function renderUploads() {
+		const wrapper = document.getElementById('uploads-wrapper');
+		if (!wrapper) return;
+		wrapper.innerHTML = '';
+
+		// Resize handle (drag to resize panel height)
+		const resizeHandle = document.createElement('div');
+		resizeHandle.className = 'uploads-resize-handle';
+		wrapper.appendChild(resizeHandle);
+
+		let isResizing = false;
+		let startY = 0;
+		let startHeight = 0;
+		resizeHandle.addEventListener('mousedown', (e) => {
+			isResizing = true;
+			startY = e.clientY;
+			startHeight = wrapper.offsetHeight;
+			resizeHandle.classList.add('active');
+			document.body.style.cursor = 'ns-resize';
+			document.body.style.userSelect = 'none';
+			e.preventDefault();
+		});
+		document.addEventListener('mousemove', (e) => {
+			if (!isResizing) return;
+			const delta = startY - e.clientY;
+			const newHeight = Math.max(36, Math.min(window.innerHeight * 0.8, startHeight + delta));
+			wrapper.style.height = newHeight + 'px';
+		});
+		document.addEventListener('mouseup', () => {
+			if (!isResizing) return;
+			isResizing = false;
+			resizeHandle.classList.remove('active');
+			document.body.style.cursor = '';
+			document.body.style.userSelect = '';
+		});
+
+		const wrap = document.createElement('div');
+		wrap.className = 'uploads-section';
+
+		const header = document.createElement('div');
+		header.className = 'uploads-header';
+
+		const chevron = document.createElement('span');
+		chevron.className = 'uploads-chevron';
+		chevron.innerHTML = '&#x25BC;';
+		header.appendChild(chevron);
+
+		const title = document.createElement('span');
+		title.className = 'uploads-title';
+		title.textContent = 'Server Uploads';
+		header.appendChild(title);
+
+		const totalCount = lastUploadGroups.reduce((s, g) => s + (g.uploads ? g.uploads.length : 0), 0);
+
+		const editBtn = document.createElement('button');
+		editBtn.className = 'uploads-edit-btn';
+		editBtn.title = totalCount === 0 ? 'Create config file' : 'Edit config file';
+		editBtn.innerHTML = totalCount === 0
+			? '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M3 2.5h6.5L13 6v7a.5.5 0 0 1-.5.5h-9.5a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5z"/><path d="M9.2 2.5V6h3.5M5.5 10h5M8 7.5v5"/></svg>'
+			: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M11.5 1.7l2.8 2.8-9 9-3.3.5.5-3.3z"/><path d="M10 3.2l2.8 2.8"/></svg>';
+		editBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({ type: 'editUploadsFile' });
+		});
+		header.appendChild(editBtn);
+
+		if (totalCount > 0) {
+			const badge = document.createElement('span');
+			badge.className = 'uploads-count';
+			badge.textContent = String(totalCount);
+			header.appendChild(badge);
+		}
+
+		const body = document.createElement('div');
+		body.className = 'uploads-body';
+
+		let savedUploadsHeight = '';
+		header.addEventListener('click', () => {
+			const isCollapsing = !wrapper.classList.contains('collapsed');
+			body.classList.toggle('collapsed');
+			chevron.classList.toggle('collapsed');
+			if (isCollapsing) {
+				savedUploadsHeight = wrapper.style.height;
+				wrapper.style.height = '';
+			} else {
+				wrapper.style.height = savedUploadsHeight;
+			}
+			wrapper.classList.toggle('collapsed');
+			vscode.postMessage({ type: 'setUploadsCollapsed', value: wrapper.classList.contains('collapsed') });
+		});
+
+		if (totalCount === 0) {
+			const empty = document.createElement('div');
+			empty.className = 'uploads-empty';
+			empty.innerHTML = 'No uploads configured. Click <span class="uploads-empty-icon">+</span> to create <code>server-uploads.local.json</code>.';
+			body.appendChild(empty);
+		} else {
+			const nonEmptyGroups = lastUploadGroups.filter((g) => g.uploads && g.uploads.length > 0);
+			const showGroupHeads = nonEmptyGroups.length > 1;
+			for (const group of nonEmptyGroups) {
+				if (showGroupHeads && group.name && group.name !== 'Uploads') {
+					const subhead = document.createElement('div');
+					subhead.className = 'uploads-group-name';
+					subhead.textContent = group.name;
+					body.appendChild(subhead);
+				}
+				for (const u of group.uploads) {
+					body.appendChild(createUploadCard(u, group.name));
+				}
+			}
+		}
+
+		wrap.appendChild(header);
+		wrap.appendChild(body);
+		wrapper.appendChild(wrap);
+
+		applyUploadsCollapseState();
+	}
+
+	function createUploadCard(upload, groupName) {
+		const key = uploadKeyOf(groupName, upload.name);
+		const card = document.createElement('div');
+		card.className = 'upload-item';
+		card.dataset.uploadKey = key;
+		card.dataset.uploadName = upload.name;
+		card.dataset.uploadGroup = groupName || 'Uploads';
+
+		const icon = document.createElement('span');
+		icon.className = 'upload-icon';
+		icon.innerHTML = '&#x25B6;';
+		card.appendChild(icon);
+
+		const info = document.createElement('div');
+		info.className = 'upload-info';
+
+		const top = document.createElement('div');
+		top.className = 'upload-top';
+		const nameSpan = document.createElement('span');
+		nameSpan.className = 'upload-name';
+		nameSpan.textContent = upload.name;
+		top.appendChild(nameSpan);
+
+		if (upload.protocol) {
+			const proto = document.createElement('span');
+			proto.className = 'upload-proto';
+			proto.textContent = upload.protocol;
+			top.appendChild(proto);
+		}
+
+		info.appendChild(top);
+
+		const sub = document.createElement('span');
+		sub.className = 'upload-subtitle';
+		const where = (upload.user && upload.host)
+			? upload.user + '@' + upload.host
+			: (upload.server ? '→ server "' + upload.server + '" (not found)' : 'no server config');
+		sub.textContent = where + ' · ' + upload.remoteDir;
+		if (upload._unresolved) {
+			sub.classList.add('upload-unresolved');
+		}
+		info.appendChild(sub);
+
+		const status = document.createElement('div');
+		status.className = 'upload-status';
+		info.appendChild(status);
+
+		card.appendChild(info);
+
+		const folderPath = '<path d="M2 5.2v7.3a1.2 1.2 0 0 0 1.2 1.2h9.6a1.2 1.2 0 0 0 1.2-1.2V6a1.2 1.2 0 0 0-1.2-1.2H7.6L6.2 3.4a.8.8 0 0 0-.6-.2H3.2A1.2 1.2 0 0 0 2 4.4z"/>';
+		const folderSvgAttrs = 'width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"';
+
+		const btnGroup = document.createElement('div');
+		btnGroup.className = 'upload-btn-group';
+
+		const addBtn = document.createElement('button');
+		addBtn.className = 'upload-add-btn';
+		addBtn.title = 'Pick files / folders to upload';
+		addBtn.innerHTML = '<svg ' + folderSvgAttrs + '>' + folderPath + '<path d="M6 9.5h4M8 7.5v4"/></svg>';
+		addBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({
+				type: 'pickUploadItems',
+				uploadName: upload.name,
+				uploadGroup: groupName || 'Uploads',
+			});
+		});
+		btnGroup.appendChild(addBtn);
+
+		const excludeBtn = document.createElement('button');
+		excludeBtn.className = 'upload-exclude-btn';
+		excludeBtn.title = 'Pick files / folders to exclude from upload';
+		excludeBtn.innerHTML = '<svg ' + folderSvgAttrs + '>' + folderPath + '<path d="M6 9.5h4"/></svg>';
+		excludeBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({
+				type: 'pickUploadExcludes',
+				uploadName: upload.name,
+				uploadGroup: groupName || 'Uploads',
+			});
+		});
+		btnGroup.appendChild(excludeBtn);
+
+		card.appendChild(btnGroup);
+
+		const itemCount = document.createElement('span');
+		itemCount.className = 'upload-items-badge';
+		itemCount.textContent = String((upload.items || []).length);
+		const tipParts = [];
+		if (upload.items && upload.items.length) {
+			tipParts.push('Items:\n' + upload.items.join('\n'));
+		}
+		if (upload.exclude && upload.exclude.length) {
+			tipParts.push('Excluded:\n' + upload.exclude.join('\n'));
+		}
+		itemCount.title = tipParts.join('\n\n');
+		card.appendChild(itemCount);
+
+		const cancelBtn = document.createElement('button');
+		cancelBtn.className = 'upload-cancel-btn';
+		cancelBtn.innerHTML = '&#x2715;';
+		cancelBtn.title = 'Cancel upload';
+		cancelBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({
+				type: 'cancelUpload',
+				uploadName: upload.name,
+				uploadGroup: groupName || 'Uploads',
+			});
+		});
+		card.appendChild(cancelBtn);
+
+		card.addEventListener('click', () => {
+			if (uploadActiveKeys.has(key)) return;
+			vscode.postMessage({
+				type: 'runUpload',
+				uploadName: upload.name,
+				uploadGroup: groupName || 'Uploads',
+			});
+		});
+
+		card.addEventListener('contextmenu', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			closeContextMenu();
+			const menu = document.createElement('div');
+			menu.className = 'context-menu';
+
+			const editItem = document.createElement('div');
+			editItem.className = 'context-menu-item';
+			editItem.textContent = 'Edit config file';
+			editItem.addEventListener('click', () => {
+				vscode.postMessage({ type: 'editUploadsFile' });
+				closeContextMenu();
+			});
+			menu.appendChild(editItem);
+
+			const addItem = document.createElement('div');
+			addItem.className = 'context-menu-item';
+			addItem.textContent = 'Add files / folders…';
+			addItem.addEventListener('click', () => {
+				vscode.postMessage({
+					type: 'pickUploadItems',
+					uploadName: upload.name,
+					uploadGroup: groupName || 'Uploads',
+				});
+				closeContextMenu();
+			});
+			menu.appendChild(addItem);
+
+			const excludeItem = document.createElement('div');
+			excludeItem.className = 'context-menu-item';
+			excludeItem.textContent = 'Exclude files / folders…';
+			excludeItem.addEventListener('click', () => {
+				vscode.postMessage({
+					type: 'pickUploadExcludes',
+					uploadName: upload.name,
+					uploadGroup: groupName || 'Uploads',
+				});
+				closeContextMenu();
+			});
+			menu.appendChild(excludeItem);
+
+			document.body.appendChild(menu);
+			activeContextMenu = menu;
+			const menuRect = menu.getBoundingClientRect();
+			let top = e.clientY;
+			let left = e.clientX;
+			if (top + menuRect.height > window.innerHeight) top = window.innerHeight - menuRect.height - 4;
+			if (left + menuRect.width > window.innerWidth) left = window.innerWidth - menuRect.width - 4;
+			menu.style.top = top + 'px';
+			menu.style.left = left + 'px';
+		});
+
+		applyUploadStatusToCard(card, uploadStatusMap.get(key), uploadActiveKeys.has(key));
+		return card;
+	}
+
+	function updateUploadCardStatus(key) {
+		const wrapper = document.getElementById('uploads-wrapper');
+		if (!wrapper) return;
+		const card = wrapper.querySelector('.upload-item[data-upload-key="' + cssEscape(key) + '"]');
+		if (!(card instanceof HTMLElement)) return;
+		applyUploadStatusToCard(card, uploadStatusMap.get(key), uploadActiveKeys.has(key));
+	}
+
+	function cssEscape(s) {
+		return String(s).replace(/(["\\])/g, '\\$1');
+	}
+
+	function applyUploadStatusToCard(card, status, isActive) {
+		card.classList.remove('upload-running', 'upload-done', 'upload-error', 'upload-cancelled');
+		const statusEl = card.querySelector('.upload-status');
+		if (!statusEl) return;
+		statusEl.innerHTML = '';
+
+		if (isActive) {
+			card.classList.add('upload-running');
+			const bar = document.createElement('div');
+			bar.className = 'upload-progress';
+			const fill = document.createElement('div');
+			fill.className = 'upload-progress-fill';
+			const pct = status && typeof status.percent === 'number' ? status.percent : 0;
+			fill.style.width = pct.toFixed(1) + '%';
+			bar.appendChild(fill);
+			statusEl.appendChild(bar);
+
+			const text = document.createElement('div');
+			text.className = 'upload-progress-text';
+			const parts = [];
+			if (status && typeof status.percent === 'number') parts.push(status.percent.toFixed(0) + '%');
+			if (status && status.currentFile) parts.push(truncate(status.currentFile, 40));
+			if (status && typeof status.speedBps === 'number' && status.speedBps > 0) {
+				parts.push(formatBytesShort(status.speedBps) + '/s');
+			}
+			if (status && status.filesTotal) parts.push(status.filesDone + '/' + status.filesTotal);
+			if (status && status.status === 'connecting') parts.push(status.message || 'Connecting…');
+			text.textContent = parts.join(' · ');
+			statusEl.appendChild(text);
+		} else if (status) {
+			if (status.status === 'done') {
+				card.classList.add('upload-done');
+				const text = document.createElement('div');
+				text.className = 'upload-last';
+				text.textContent = '✓ ' + (status.message || 'Uploaded');
+				statusEl.appendChild(text);
+			} else if (status.status === 'error') {
+				card.classList.add('upload-error');
+				const text = document.createElement('div');
+				text.className = 'upload-last upload-last-error';
+				text.textContent = '✗ ' + (status.message || 'Failed');
+				text.title = status.message || '';
+				statusEl.appendChild(text);
+			} else if (status.status === 'cancelled') {
+				card.classList.add('upload-cancelled');
+				const text = document.createElement('div');
+				text.className = 'upload-last';
+				text.textContent = status.message || 'Cancelled';
+				statusEl.appendChild(text);
+			}
+		}
+	}
+
+	function truncate(s, n) {
+		if (!s || s.length <= n) return s;
+		return '…' + s.substring(s.length - n + 1);
+	}
 
 	// Signal to extension that webview JS is ready to receive messages
 	vscode.postMessage({ type: 'ready' });
