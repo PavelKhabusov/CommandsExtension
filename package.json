@@ -2,7 +2,7 @@
   "name": "commands-extension",
   "displayName": "Commands Extension",
   "description": "Auto-interface for running project commands (node, pwsh, shell) from a Webview panel",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "publisher": "PavelKhabusov",
   "engines": {
     "vscode": "^1.85.0"
@@ -67,7 +67,7 @@
     }
   },
   "scripts": {
-    "version": "sed -i '' \"s/version-[0-9]*\\.[0-9]*\\.[0-9]*/version-$(node -p \"require('./package.json').version\")/\" README.md && git add README.md",
+    "version": "node -e \"const fs=require('fs');const v=require('./package.json').version;fs.writeFileSync('README.md',fs.readFileSync('README.md','utf8').replace(/version-\\d+\\.\\d+\\.\\d+/,'version-'+v))\" && git add README.md",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
