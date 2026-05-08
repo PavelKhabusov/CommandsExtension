@@ -4,7 +4,7 @@ import { loadCommands, addCommandToFile, moveCommandInFile, removeGroupFromFile,
 import { getMarketplaceTemplates } from './marketplace';
 import { TerminalManager } from './terminalManager';
 import { loadUploads, uploadKey, pickFilesAndAppend, addUploadItems, addUploadExcludes, pickExcludePatternsForUpload, ensureUploadsFile, resolveServer } from './uploadsProvider';
-import { uploadRunner, uploadStalenessTracker } from './extension';
+import { uploadRunner, uploadStalenessTracker, StalenessInfo } from './extension';
 import { UploadDefinition, ServerDefinition } from './uploadsTypes';
 
 export function getNonce(): string {
@@ -302,6 +302,34 @@ export class WebviewMessageHandler {
 				this._refresh();
 				break;
 			}
+			case 'markUploadSynced': {
+				if (message.uploadKey) uploadStalenessTracker?.markSynced(message.uploadKey as string);
+				break;
+			}
+			case 'runAutoUpload': {
+				const uploadKeys = message.uploadKeys as string[];
+				if (!uploadKeys?.length || !uploadRunner) return;
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot) return;
+				const stalenessMap = uploadStalenessTracker?.getStalenessMap() ?? {};
+				for (const uKey of uploadKeys) {
+					const sep = uKey.indexOf(':');
+					if (sep === -1) continue;
+					const groupName = uKey.substring(0, sep);
+					const uploadName = uKey.substring(sep + 1);
+					const upload = this._findUpload(uploadName, groupName);
+					if (!upload) continue;
+					const resolved = resolveServer(upload, this._cachedServers);
+					if (!resolved) continue;
+					const info = stalenessMap[uKey];
+					const fileFilter = info?.staleFiles.length ? new Set(info.staleFiles) : undefined;
+					if (!fileFilter?.size) continue;
+					uploadRunner.run(wsRoot, resolved, fileFilter).catch((e) => {
+						vscode.window.showErrorMessage(`Upload failed: ${e instanceof Error ? e.message : e}`);
+					});
+				}
+				break;
+			}
 			case 'editUploadsFile': {
 				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 				if (!wsRoot) return;
@@ -498,7 +526,7 @@ export function sendUploadProgress(postMessage: (msg: unknown) => void, progress
 export function sendUploadStaleness(
 	postMessage: (msg: unknown) => void,
 	key: string,
-	staleness: 'clean' | 'stale'
+	info: StalenessInfo
 ): void {
-	postMessage({ type: 'uploadStaleness', uploadKey: key, staleness });
+	postMessage({ type: 'uploadStaleness', uploadKey: key, ...info });
 }

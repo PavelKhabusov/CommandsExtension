@@ -65,8 +65,8 @@ export class CommandsPanel {
 		const progressSub = uploadProgressBus.subscribe((p) => {
 			sendUploadProgress((msg) => this._panel.webview.postMessage(msg), p);
 		});
-		const stalenessSub = uploadStalenessBus.subscribe((key, staleness) => {
-			sendUploadStaleness((msg) => this._panel.webview.postMessage(msg), key, staleness);
+		const stalenessSub = uploadStalenessBus.subscribe((key, info) => {
+			sendUploadStaleness((msg) => this._panel.webview.postMessage(msg), key, info);
 		});
 		this._disposables.push(progressSub, stalenessSub);
 	}

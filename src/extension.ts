@@ -24,12 +24,19 @@ export let uploadRunner: UploadRunner | undefined;
 
 // ── Staleness tracking ────────────────────────────────────────────
 
-type StalenessListener = (key: string, staleness: 'clean' | 'stale') => void;
+export interface StalenessInfo {
+  staleness: 'clean' | 'stale';
+  staleCount: number;
+  staleFiles: string[];
+  trackedCount: number;
+}
+
+type StalenessListener = (key: string, info: StalenessInfo) => void;
 
 class UploadStalenessBus {
   private readonly _listeners = new Set<StalenessListener>();
-  emit(key: string, staleness: 'clean' | 'stale'): void {
-    for (const l of this._listeners) l(key, staleness);
+  emit(key: string, info: StalenessInfo): void {
+    for (const l of this._listeners) l(key, info);
   }
   subscribe(l: StalenessListener): vscode.Disposable {
     this._listeners.add(l);
@@ -42,7 +49,7 @@ export let uploadStalenessTracker: UploadStalenessTracker | undefined;
 
 class UploadStalenessTracker {
   private readonly _snapshots = new Map<string, Map<string, number>>();
-  private readonly _stalenessState = new Map<string, boolean>();
+  private readonly _staleFiles = new Map<string, Set<string>>();
   private readonly _reverseIndex = new Map<string, Set<string>>();
 
   constructor(
@@ -53,13 +60,17 @@ class UploadStalenessTracker {
   }
 
   private _restore(): void {
-    type Stored = Record<string, { snapshot: Record<string, number>; stale: boolean }>;
+    type Stored = Record<string, { snapshot: Record<string, number> }>;
     const saved = this._context.workspaceState.get<Stored>('commandsExtension.uploadStaleness', {});
     for (const [key, data] of Object.entries(saved)) {
-      const map = new Map<string, number>(Object.entries(data.snapshot));
-      this._snapshots.set(key, map);
-      this._stalenessState.set(key, data.stale);
-      for (const p of map.keys()) {
+      const snap = new Map<string, number>(Object.entries(data.snapshot));
+      this._snapshots.set(key, snap);
+      const stale = new Set<string>();
+      for (const [p, snapMtime] of snap) {
+        try { if (fs.statSync(p).mtimeMs > snapMtime) stale.add(p); } catch { /* deleted */ }
+      }
+      this._staleFiles.set(key, stale);
+      for (const p of snap.keys()) {
         const s = this._reverseIndex.get(p) ?? new Set();
         s.add(key);
         this._reverseIndex.set(p, s);
@@ -67,47 +78,63 @@ class UploadStalenessTracker {
     }
   }
 
-  public onUploadDone(key: string, filePaths: string[]): void {
-    const old = this._snapshots.get(key);
-    if (old) {
-      for (const p of old.keys()) {
-        const s = this._reverseIndex.get(p);
-        if (s) { s.delete(key); if (!s.size) this._reverseIndex.delete(p); }
-      }
-    }
-    const snap = new Map<string, number>();
+  private _info(key: string): StalenessInfo {
+    const stale = this._staleFiles.get(key) ?? new Set();
+    const trackedCount = this._snapshots.get(key)?.size ?? 0;
+    return { staleness: stale.size > 0 ? 'stale' : 'clean', staleCount: stale.size, staleFiles: Array.from(stale), trackedCount };
+  }
+
+  private _emitKeys(keys: Iterable<string>): void {
+    for (const key of keys) this._bus.emit(key, this._info(key));
+  }
+
+  public onUploadDone(key: string, filePaths: string[], partial = false): void {
+    const freshMtimes = new Map<string, number>();
     for (const p of filePaths) {
-      try { snap.set(p, fs.statSync(p).mtimeMs); } catch { /* skip */ }
-    }
-    this._snapshots.set(key, snap);
-    this._stalenessState.set(key, false);
-    for (const p of snap.keys()) {
-      const s = this._reverseIndex.get(p) ?? new Set();
-      s.add(key);
-      this._reverseIndex.set(p, s);
+      try { freshMtimes.set(p, fs.statSync(p).mtimeMs); } catch { /* skip */ }
     }
 
-    // If another stale upload's files are all covered by this upload, mark it clean too
-    const uploadedSet = new Set(filePaths);
+    const changedKeys = new Set<string>([key]);
+
+    if (!partial) {
+      const old = this._snapshots.get(key);
+      if (old) {
+        for (const p of old.keys()) {
+          const s = this._reverseIndex.get(p);
+          if (s) { s.delete(key); if (!s.size) this._reverseIndex.delete(p); }
+        }
+      }
+      this._snapshots.set(key, new Map(freshMtimes));
+      this._staleFiles.set(key, new Set());
+      for (const p of freshMtimes.keys()) {
+        const s = this._reverseIndex.get(p) ?? new Set();
+        s.add(key);
+        this._reverseIndex.set(p, s);
+      }
+    } else {
+      const snap = this._snapshots.get(key);
+      if (!snap) { this.onUploadDone(key, filePaths, false); return; }
+      const stale = this._staleFiles.get(key) ?? new Set();
+      for (const [p, mtime] of freshMtimes) {
+        if (snap.has(p)) { snap.set(p, mtime); stale.delete(p); }
+      }
+      this._staleFiles.set(key, stale);
+    }
+
+    // Cross-update: remove uploaded files from other uploads' stale sets
     for (const [otherKey, otherSnap] of this._snapshots) {
       if (otherKey === key) continue;
-      if (!this._stalenessState.get(otherKey)) continue;
-      let allCovered = true;
-      for (const p of otherSnap.keys()) {
-        if (!uploadedSet.has(p)) { allCovered = false; break; }
-      }
-      if (allCovered) {
-        for (const p of otherSnap.keys()) {
-          const mtime = snap.get(p);
-          if (mtime !== undefined) otherSnap.set(p, mtime);
-        }
-        this._stalenessState.set(otherKey, false);
-        this._bus.emit(otherKey, 'clean');
+      const otherStale = this._staleFiles.get(otherKey);
+      if (!otherStale?.size) continue;
+      for (const [p, mtime] of freshMtimes) {
+        if (!otherSnap.has(p)) continue;
+        otherSnap.set(p, mtime);
+        if (otherStale.delete(p)) changedKeys.add(otherKey);
       }
     }
 
     this._persist();
-    this._bus.emit(key, 'clean');
+    this._emitKeys(changedKeys);
   }
 
   public onFileChanged(filePath: string): void {
@@ -115,31 +142,56 @@ class UploadStalenessTracker {
     if (!keys?.size) return;
     let currentMtime: number;
     try { currentMtime = fs.statSync(filePath).mtimeMs; } catch { return; }
+    const changedKeys: string[] = [];
     for (const key of keys) {
       const snap = this._snapshots.get(key);
       if (!snap) continue;
       const snapMtime = snap.get(filePath);
-      if (snapMtime !== undefined && currentMtime > snapMtime && !this._stalenessState.get(key)) {
-        this._stalenessState.set(key, true);
-        this._persist();
-        this._bus.emit(key, 'stale');
-      }
+      if (snapMtime === undefined || currentMtime <= snapMtime) continue;
+      const stale = this._staleFiles.get(key) ?? new Set();
+      if (stale.has(filePath)) continue;
+      stale.add(filePath);
+      this._staleFiles.set(key, stale);
+      changedKeys.push(key);
     }
+    if (changedKeys.length) this._emitKeys(changedKeys);
   }
 
-  public getStalenessMap(): Record<string, 'clean' | 'stale'> {
-    const result: Record<string, 'clean' | 'stale'> = {};
-    for (const [key] of this._snapshots) {
-      result[key] = this._stalenessState.get(key) ? 'stale' : 'clean';
+  public markSynced(key: string): void {
+    const snap = this._snapshots.get(key);
+    if (!snap) return;
+    for (const p of snap.keys()) {
+      try { snap.set(p, fs.statSync(p).mtimeMs); } catch { /* skip */ }
     }
+    this._staleFiles.set(key, new Set());
+
+    const changedKeys = new Set<string>([key]);
+    for (const [otherKey, otherSnap] of this._snapshots) {
+      if (otherKey === key) continue;
+      const otherStale = this._staleFiles.get(otherKey);
+      if (!otherStale?.size) continue;
+      for (const [p, mtime] of snap) {
+        if (!otherSnap.has(p)) continue;
+        otherSnap.set(p, mtime);
+        if (otherStale.delete(p)) changedKeys.add(otherKey);
+      }
+    }
+
+    this._persist();
+    this._emitKeys(changedKeys);
+  }
+
+  public getStalenessMap(): Record<string, StalenessInfo> {
+    const result: Record<string, StalenessInfo> = {};
+    for (const [key] of this._snapshots) result[key] = this._info(key);
     return result;
   }
 
   private _persist(): void {
-    type Stored = Record<string, { snapshot: Record<string, number>; stale: boolean }>;
+    type Stored = Record<string, { snapshot: Record<string, number> }>;
     const saved: Stored = {};
     for (const [key, snap] of this._snapshots) {
-      saved[key] = { snapshot: Object.fromEntries(snap), stale: this._stalenessState.get(key) || false };
+      saved[key] = { snapshot: Object.fromEntries(snap) };
     }
     this._context.workspaceState.update('commandsExtension.uploadStaleness', saved);
   }
@@ -149,7 +201,7 @@ export function activate(context: vscode.ExtensionContext): void {
   uploadStalenessTracker = new UploadStalenessTracker(context, uploadStalenessBus);
   uploadRunner = new UploadRunner(
     (p) => uploadProgressBus.emit(p),
-    (key, filePaths) => uploadStalenessTracker!.onUploadDone(key, filePaths)
+    (key, filePaths, partial) => uploadStalenessTracker!.onUploadDone(key, filePaths, partial)
   );
 
   const openPanelCommand = vscode.commands.registerCommand(

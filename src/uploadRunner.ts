@@ -13,7 +13,7 @@ export class UploadRunner {
 
   constructor(
     private readonly _onProgress: ProgressCallback,
-    private readonly _onFilesUploaded?: (key: string, filePaths: string[]) => void
+    private readonly _onFilesUploaded?: (key: string, filePaths: string[], partial: boolean) => void
   ) {}
 
   public getLastStatuses(): UploadProgress[] {
@@ -29,7 +29,7 @@ export class UploadRunner {
     if (ctrl) ctrl.abort();
   }
 
-  public async run(workspaceRoot: string, upload: ResolvedUpload): Promise<void> {
+  public async run(workspaceRoot: string, upload: ResolvedUpload, fileFilter?: Set<string>): Promise<void> {
     const key = `${upload.group}:${upload.name}`;
     if (this._active.has(key)) {
       vscode.window.showInformationMessage(`Upload "${upload.name}" is already running.`);
@@ -48,7 +48,10 @@ export class UploadRunner {
     emit({ status: 'connecting', message: 'Resolving items…' });
 
     try {
-      const items = await resolveItems(workspaceRoot, upload.items, upload.exclude);
+      let items = await resolveItems(workspaceRoot, upload.items, upload.exclude);
+      if (fileFilter && fileFilter.size > 0) {
+        items = items.filter((it) => fileFilter.has(it.absolutePath));
+      }
       if (items.length === 0) {
         emit({ status: 'error', message: 'No files found to upload (check items / exclude)', finishedAt: Date.now() });
         return;
@@ -75,7 +78,7 @@ export class UploadRunner {
       } else {
         await this._runFtp(upload, password, items, emit, ctrl.signal);
       }
-      this._onFilesUploaded?.(key, items.map((it) => it.absolutePath));
+      this._onFilesUploaded?.(key, items.map((it) => it.absolutePath), !!fileFilter);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       emit({ status: 'error', message, finishedAt: Date.now() });

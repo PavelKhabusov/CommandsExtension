@@ -43,9 +43,9 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 				sendUploadProgress((msg) => this._view!.webview.postMessage(msg), p);
 			}
 		});
-		const stalenessSub = uploadStalenessBus.subscribe((key, staleness) => {
+		const stalenessSub = uploadStalenessBus.subscribe((key, info) => {
 			if (this._view) {
-				sendUploadStaleness((msg) => this._view!.webview.postMessage(msg), key, staleness);
+				sendUploadStaleness((msg) => this._view!.webview.postMessage(msg), key, info);
 			}
 		});
 		webviewView.onDidDispose(() => { progressSub.dispose(); stalenessSub.dispose(); });

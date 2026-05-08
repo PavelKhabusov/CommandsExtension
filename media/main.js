@@ -299,9 +299,15 @@
 				renderUploads();
 				break;
 			case 'uploadStaleness':
-				if (message.uploadKey && message.staleness) {
-					uploadStalenessMap.set(message.uploadKey, message.staleness);
+				if (message.uploadKey) {
+					uploadStalenessMap.set(message.uploadKey, {
+						staleness: message.staleness,
+						staleCount: message.staleCount || 0,
+						staleFiles: message.staleFiles || [],
+						trackedCount: message.trackedCount || 0,
+					});
 					updateUploadCardStatus(message.uploadKey);
+					updateAutoUploads();
 				}
 				break;
 			case 'updateSectionCollapse':
@@ -1212,9 +1218,122 @@
 
 		wrap.appendChild(header);
 		wrap.appendChild(body);
+		buildAutoUploads(body);
 		wrapper.appendChild(wrap);
 
 		applyUploadsCollapseState();
+	}
+
+	function computeAutoUploadCmds() {
+		/** @type {Map<string, {display: string, candidates: Array<{key: string, staleFiles: Set<string>}>}>} */
+		const serverMap = new Map();
+		for (const group of lastUploadGroups) {
+			for (const u of group.uploads || []) {
+				const key = uploadKeyOf(group.name, u.name);
+				const info = uploadStalenessMap.get(key);
+				if (!info || info.staleness !== 'stale' || !info.staleCount) continue;
+				const serverKey = (u.protocol || '') + '://' + (u.user || '') + '@' + (u.host || '') + ':' + (u.port || '');
+				const entry = serverMap.get(serverKey) || {
+					display: (u.user || '') + '@' + (u.host || ''),
+					candidates: [],
+				};
+				entry.candidates.push({ key, staleFiles: new Set(info.staleFiles || []), trackedCount: info.trackedCount || 0 });
+				serverMap.set(serverKey, entry);
+			}
+		}
+
+		const result = [];
+		for (const entry of serverMap.values()) {
+			// Collect all unique stale files for this server
+			const allStale = new Set();
+			for (const c of entry.candidates) for (const f of c.staleFiles) allStale.add(f);
+
+			// Greedy set cover: pick fewest uploads that cover all stale files
+			// Sort by coverage size desc so we pick the most useful upload first
+			// Primary: more coverage first. Tiebreaker: fewer total tracked files (more targeted upload).
+			const candidates = entry.candidates.slice().sort((a, b) =>
+				(b.staleFiles.size - a.staleFiles.size) || (a.trackedCount - b.trackedCount)
+			);
+			const remaining = new Set(allStale);
+			const chosen = [];
+			for (const c of candidates) {
+				if (!remaining.size) break;
+				let covers = false;
+				for (const f of c.staleFiles) if (remaining.has(f)) { covers = true; break; }
+				if (!covers) continue;
+				chosen.push(c);
+				for (const f of c.staleFiles) remaining.delete(f);
+			}
+			if (!chosen.length) continue;
+
+			const staleFiles = new Set();
+			for (const c of chosen) for (const f of c.staleFiles) staleFiles.add(f);
+			result.push({ display: entry.display, uploadKeys: chosen.map(c => c.key), staleFiles });
+		}
+		return result;
+	}
+
+	function getAutoUploadKeys() {
+		const keys = new Set();
+		for (const cmd of computeAutoUploadCmds()) {
+			for (const k of cmd.uploadKeys) keys.add(k);
+		}
+		return keys;
+	}
+
+	function buildAutoUploads(body) {
+		var existing = body.querySelector('.uploads-auto-section');
+		if (existing) existing.remove();
+		const cmds = computeAutoUploadCmds();
+		if (!cmds.length) return;
+		const section = document.createElement('div');
+		section.className = 'uploads-auto-section';
+		for (const cmd of cmds) {
+			section.appendChild(createAutoUploadCard(cmd));
+		}
+		body.appendChild(section);
+	}
+
+	function updateAutoUploads() {
+		const wrapper = document.getElementById('uploads-wrapper');
+		if (!wrapper) return;
+		const body = wrapper.querySelector('.uploads-body');
+		if (body) buildAutoUploads(body);
+	}
+
+	function createAutoUploadCard(cmd) {
+		const card = document.createElement('div');
+		card.className = 'upload-auto-item';
+		card.title = 'Upload only modified files to ' + cmd.display;
+
+		const icon = document.createElement('span');
+		icon.className = 'upload-auto-icon';
+		icon.textContent = '⚠';
+		card.appendChild(icon);
+
+		const info = document.createElement('div');
+		info.className = 'upload-info';
+
+		const top = document.createElement('div');
+		top.className = 'upload-top';
+		const nameSpan = document.createElement('span');
+		nameSpan.className = 'upload-name';
+		nameSpan.textContent = 'Upload ' + cmd.staleFiles.size + ' modified file' + (cmd.staleFiles.size !== 1 ? 's' : '');
+		top.appendChild(nameSpan);
+		info.appendChild(top);
+
+		const sub = document.createElement('span');
+		sub.className = 'upload-subtitle';
+		sub.textContent = cmd.display;
+		info.appendChild(sub);
+
+		card.appendChild(info);
+
+		card.addEventListener('click', function() {
+			vscode.postMessage({ type: 'runAutoUpload', uploadKeys: cmd.uploadKeys });
+		});
+
+		return card;
 	}
 
 	function createUploadCard(upload, groupName) {
@@ -1380,6 +1499,23 @@
 			});
 			menu.appendChild(excludeItem);
 
+			const uploadKey = uploadKeyOf(groupName, upload.name);
+			const currentStaleness = uploadStalenessMap.get(uploadKey);
+			if (currentStaleness && currentStaleness.staleness === 'stale') {
+				const sep = document.createElement('div');
+				sep.className = 'context-menu-separator';
+				menu.appendChild(sep);
+
+				const syncedItem = document.createElement('div');
+				syncedItem.className = 'context-menu-item';
+				syncedItem.textContent = 'Mark as synced';
+				syncedItem.addEventListener('click', () => {
+					vscode.postMessage({ type: 'markUploadSynced', uploadKey });
+					closeContextMenu();
+				});
+				menu.appendChild(syncedItem);
+			}
+
 			document.body.appendChild(menu);
 			activeContextMenu = menu;
 			const menuRect = menu.getBoundingClientRect();
@@ -1414,7 +1550,8 @@
 		statusEl.innerHTML = '';
 
 		const key = card.dataset.uploadKey;
-		const staleness = key ? uploadStalenessMap.get(key) : undefined;
+		const stalenessInfo = key ? uploadStalenessMap.get(key) : undefined;
+		const staleness = stalenessInfo ? stalenessInfo.staleness : undefined;
 
 		if (isActive) {
 			card.classList.add('upload-running');
@@ -1439,11 +1576,18 @@
 			if (status && status.status === 'connecting') parts.push(status.message || 'Connecting…');
 			text.textContent = parts.join(' · ');
 			statusEl.appendChild(text);
-		} else if (staleness === 'stale') {
+		} else if (staleness === 'stale' && key && getAutoUploadKeys().has(key)) {
 			card.classList.add('upload-stale');
 			const text = document.createElement('div');
 			text.className = 'upload-last upload-last-stale';
-			text.textContent = '⚠ Modified';
+			const n = stalenessInfo ? stalenessInfo.staleCount : 0;
+			text.textContent = '⚠ ' + n + ' file' + (n !== 1 ? 's' : '') + ' modified';
+			if (stalenessInfo && stalenessInfo.staleFiles.length > 0) {
+				text.title = stalenessInfo.staleFiles.map(function(p) {
+					var parts = p.replace(/\\/g, '/').split('/');
+					return parts.length >= 2 ? parts.slice(-2).join('/') : p;
+				}).join('\n');
+			}
 			statusEl.appendChild(text);
 		} else if (status) {
 			if (status.status === 'done') {
