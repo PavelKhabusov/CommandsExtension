@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { getWebviewHtml, WebviewMessageHandler, sendCommandsToWebview, sendActiveTerminals, sendUploadProgress } from './webviewBase';
+import { getWebviewHtml, WebviewMessageHandler, sendCommandsToWebview, sendActiveTerminals, sendUploadProgress, sendUploadStaleness } from './webviewBase';
 import { TerminalManager } from './terminalManager';
-import { uploadProgressBus } from './extension';
+import { uploadProgressBus, uploadStalenessBus } from './extension';
 
 export class CommandsPanel {
 	public static currentPanel: CommandsPanel | undefined;
@@ -65,7 +65,10 @@ export class CommandsPanel {
 		const progressSub = uploadProgressBus.subscribe((p) => {
 			sendUploadProgress((msg) => this._panel.webview.postMessage(msg), p);
 		});
-		this._disposables.push(progressSub);
+		const stalenessSub = uploadStalenessBus.subscribe((key, staleness) => {
+			sendUploadStaleness((msg) => this._panel.webview.postMessage(msg), key, staleness);
+		});
+		this._disposables.push(progressSub, stalenessSub);
 	}
 
 	public dispose(): void {

@@ -11,7 +11,10 @@ export class UploadRunner {
   private readonly _active = new Map<string, AbortController>();
   private readonly _lastStatus = new Map<string, UploadProgress>();
 
-  constructor(private readonly _onProgress: ProgressCallback) {}
+  constructor(
+    private readonly _onProgress: ProgressCallback,
+    private readonly _onFilesUploaded?: (key: string, filePaths: string[]) => void
+  ) {}
 
   public getLastStatuses(): UploadProgress[] {
     return Array.from(this._lastStatus.values());
@@ -72,6 +75,7 @@ export class UploadRunner {
       } else {
         await this._runFtp(upload, password, items, emit, ctrl.signal);
       }
+      this._onFilesUploaded?.(key, items.map((it) => it.absolutePath));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       emit({ status: 'error', message, finishedAt: Date.now() });

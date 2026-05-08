@@ -23,6 +23,8 @@
 	let confirmCommands = /** @type {string[]} */ ([]);
 	/** @type {Map<string, any>} */
 	const uploadStatusMap = new Map();
+	/** @type {Map<string, 'clean' | 'stale'>} */
+	const uploadStalenessMap = new Map();
 	/** @type {Set<string>} */
 	const uploadActiveKeys = new Set();
 	let lastUploadGroups = /** @type {any[]} */ ([]);
@@ -289,7 +291,18 @@
 					uploadActiveKeys.clear();
 					for (const k of message.activeKeys) uploadActiveKeys.add(k);
 				}
+				if (message.stalenessMap && typeof message.stalenessMap === 'object') {
+					for (const [k, v] of Object.entries(message.stalenessMap)) {
+						uploadStalenessMap.set(k, /** @type {any} */ (v));
+					}
+				}
 				renderUploads();
+				break;
+			case 'uploadStaleness':
+				if (message.uploadKey && message.staleness) {
+					uploadStalenessMap.set(message.uploadKey, message.staleness);
+					updateUploadCardStatus(message.uploadKey);
+				}
 				break;
 			case 'updateSectionCollapse':
 				marketplaceCollapsed = message.marketplaceCollapsed;
@@ -1395,10 +1408,13 @@
 	}
 
 	function applyUploadStatusToCard(card, status, isActive) {
-		card.classList.remove('upload-running', 'upload-done', 'upload-error', 'upload-cancelled');
+		card.classList.remove('upload-running', 'upload-done', 'upload-error', 'upload-cancelled', 'upload-stale');
 		const statusEl = card.querySelector('.upload-status');
 		if (!statusEl) return;
 		statusEl.innerHTML = '';
+
+		const key = card.dataset.uploadKey;
+		const staleness = key ? uploadStalenessMap.get(key) : undefined;
 
 		if (isActive) {
 			card.classList.add('upload-running');
@@ -1422,6 +1438,12 @@
 			if (status && status.filesTotal) parts.push(status.filesDone + '/' + status.filesTotal);
 			if (status && status.status === 'connecting') parts.push(status.message || 'Connecting…');
 			text.textContent = parts.join(' · ');
+			statusEl.appendChild(text);
+		} else if (staleness === 'stale') {
+			card.classList.add('upload-stale');
+			const text = document.createElement('div');
+			text.className = 'upload-last upload-last-stale';
+			text.textContent = '⚠ Modified';
 			statusEl.appendChild(text);
 		} else if (status) {
 			if (status.status === 'done') {

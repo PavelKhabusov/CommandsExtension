@@ -4,7 +4,7 @@ import { loadCommands, addCommandToFile, moveCommandInFile, removeGroupFromFile,
 import { getMarketplaceTemplates } from './marketplace';
 import { TerminalManager } from './terminalManager';
 import { loadUploads, uploadKey, pickFilesAndAppend, addUploadItems, addUploadExcludes, pickExcludePatternsForUpload, ensureUploadsFile, resolveServer } from './uploadsProvider';
-import { uploadRunner } from './extension';
+import { uploadRunner, uploadStalenessTracker } from './extension';
 import { UploadDefinition, ServerDefinition } from './uploadsTypes';
 
 export function getNonce(): string {
@@ -468,6 +468,7 @@ export async function sendCommandsToWebview(
 			if (uploadRunner.isRunning(key)) activeKeys.push(key);
 		}
 	}
+	const stalenessMap = uploadStalenessTracker ? uploadStalenessTracker.getStalenessMap() : {};
 	const marketplaceCollapsed = handler.getMarketplaceCollapsed();
 	const uploadsCollapsed = handler.getUploadsCollapsed();
 	postMessage({
@@ -476,6 +477,7 @@ export async function sendCommandsToWebview(
 		statuses: lastStatuses,
 		activeKeys,
 		uploadsCollapsed,
+		stalenessMap,
 	});
 	postMessage({
 		type: 'updateSectionCollapse',
@@ -491,4 +493,12 @@ export function sendActiveTerminals(postMessage: (msg: unknown) => void): void {
 
 export function sendUploadProgress(postMessage: (msg: unknown) => void, progress: unknown): void {
 	postMessage({ type: 'uploadProgress', progress });
+}
+
+export function sendUploadStaleness(
+	postMessage: (msg: unknown) => void,
+	key: string,
+	staleness: 'clean' | 'stale'
+): void {
+	postMessage({ type: 'uploadStaleness', uploadKey: key, staleness });
 }

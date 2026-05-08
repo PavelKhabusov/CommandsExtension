@@ -1078,6 +1078,10 @@ body {
 	border-left-color: var(--vscode-errorForeground);
 }
 
+.upload-item.upload-stale {
+	border-left-color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
 .upload-icon {
 	flex-shrink: 0;
 	width: 16px;
@@ -1178,6 +1182,10 @@ body {
 
 .upload-last-error {
 	color: var(--vscode-errorForeground);
+}
+
+.upload-last-stale {
+	color: var(--vscode-editorWarning-foreground, #cca700);
 }
 
 .upload-unresolved {
