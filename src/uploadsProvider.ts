@@ -150,7 +150,7 @@ async function statSafe(p: string): Promise<fs.Stats | null> {
   }
 }
 
-function globToRegex(rawGlob: string): RegExp {
+export function globToRegex(rawGlob: string): RegExp {
   let glob = rawGlob.replace(/^\.\//, '');
   if (glob.startsWith('/')) glob = glob.substring(1);
   let re = '';
@@ -184,7 +184,7 @@ function globToRegex(rawGlob: string): RegExp {
   return new RegExp('^' + re + '$');
 }
 
-function isExcluded(relPath: string, excludePatterns: RegExp[]): boolean {
+export function isExcluded(relPath: string, excludePatterns: RegExp[]): boolean {
   if (excludePatterns.length === 0) return false;
   const candidates = [relPath, '/' + relPath];
   for (const re of excludePatterns) {
@@ -217,6 +217,42 @@ async function walkDir(
       });
     }
   }
+}
+
+export function isPathInUploadScope(
+  absPath: string,
+  workspaceRoot: string,
+  items: string[],
+  exclude: string[] = []
+): boolean {
+  const sepNorm = (s: string) => s.split(path.sep).join('/');
+  const relFromWs = sepNorm(path.relative(workspaceRoot, absPath));
+  if (relFromWs.startsWith('..')) return false;
+
+  const excludeRegexes = exclude.map(globToRegex);
+
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'string') continue;
+
+    if (raw.includes('*')) {
+      const cleaned = raw.replace(/^\.\//, '').replace(/^\//, '');
+      const re = globToRegex(cleaned);
+      if (re.test(relFromWs) && !isExcluded(relFromWs, excludeRegexes)) return true;
+      continue;
+    }
+
+    const absBase = path.isAbsolute(raw) ? raw : path.join(workspaceRoot, raw);
+    if (absPath === absBase) {
+      if (!isExcluded(path.basename(absPath), excludeRegexes)) return true;
+      continue;
+    }
+    const baseWithSep = absBase.endsWith(path.sep) ? absBase : absBase + path.sep;
+    if (absPath.startsWith(baseWithSep)) {
+      const relFromBase = sepNorm(path.relative(absBase, absPath));
+      if (!isExcluded(relFromBase, excludeRegexes)) return true;
+    }
+  }
+  return false;
 }
 
 export async function resolveItems(

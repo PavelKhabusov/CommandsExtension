@@ -13,7 +13,12 @@ export class UploadRunner {
 
   constructor(
     private readonly _onProgress: ProgressCallback,
-    private readonly _onFilesUploaded?: (key: string, filePaths: string[], partial: boolean) => void
+    private readonly _onFilesUploaded?: (
+      key: string,
+      filePaths: string[],
+      partial: boolean,
+      scope: { workspaceRoot: string; items: string[]; exclude: string[] }
+    ) => void
   ) {}
 
   public getLastStatuses(): UploadProgress[] {
@@ -78,7 +83,12 @@ export class UploadRunner {
       } else {
         await this._runFtp(upload, password, items, emit, ctrl.signal);
       }
-      this._onFilesUploaded?.(key, items.map((it) => it.absolutePath), !!fileFilter);
+      this._onFilesUploaded?.(
+        key,
+        items.map((it) => it.absolutePath),
+        !!fileFilter,
+        { workspaceRoot, items: upload.items, exclude: upload.exclude }
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       emit({ status: 'error', message, finishedAt: Date.now() });
