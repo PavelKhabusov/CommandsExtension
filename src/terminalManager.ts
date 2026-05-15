@@ -10,10 +10,10 @@ export class TerminalManager {
 	private static _instance: TerminalManager | undefined;
 	private readonly _terminals = new Map<string, vscode.Terminal>();
 	private readonly _disposables: vscode.Disposable[] = [];
-	private _onChangeListener?: () => void;
+	private readonly _onChangeListeners = new Set<() => void>();
 
 	private constructor() {
-		// Clean up terminals from the map when they are closed
+		// Clean up terminals from the map when they are closed.
 		this._disposables.push(
 			vscode.window.onDidCloseTerminal((closedTerminal) => {
 				for (const [key, terminal] of this._terminals) {
@@ -25,6 +25,24 @@ export class TerminalManager {
 				this._notifyChange();
 			})
 		);
+		// Pick up terminals that were created outside runCommand() — e.g. the
+		// user manually opened `Cmd: foo` in VS Code's terminal UI, or another
+		// extension recreated one after a reload.
+		this._disposables.push(
+			vscode.window.onDidOpenTerminal((t) => {
+				if (!t.name.startsWith('Cmd: ')) return;
+				if (!this._terminals.has(t.name)) {
+					this._terminals.set(t.name, t);
+					this._notifyChange();
+				}
+			})
+		);
+		// On boot, adopt any pre-existing matching terminals.
+		for (const t of vscode.window.terminals) {
+			if (t.name.startsWith('Cmd: ') && !this._terminals.has(t.name)) {
+				this._terminals.set(t.name, t);
+			}
+		}
 	}
 
 	public static getInstance(): TerminalManager {
@@ -34,25 +52,42 @@ export class TerminalManager {
 		return TerminalManager._instance;
 	}
 
-	public onDidChange(listener: () => void): void {
-		this._onChangeListener = listener;
+	/**
+	 * Subscribe to terminal-set changes. Returns a disposer.
+	 * Multiple listeners are supported — older code that called this once just
+	 * registers a single subscription.
+	 */
+	public onDidChange(listener: () => void): vscode.Disposable {
+		this._onChangeListeners.add(listener);
+		return new vscode.Disposable(() => {
+			this._onChangeListeners.delete(listener);
+		});
 	}
 
 	private _notifyChange(): void {
-		if (this._onChangeListener) {
-			this._onChangeListener();
+		for (const fn of this._onChangeListeners) {
+			try { fn(); } catch { /* don't let one listener kill others */ }
 		}
 	}
 
-	/** Returns command names (without "Cmd: " prefix) that have active terminals. */
+	/**
+	 * Returns command names (without "Cmd: " prefix) that have a live terminal.
+	 * Looks at BOTH our managed map and `vscode.window.terminals` so user-opened
+	 * terminals named "Cmd: foo" are also reported.
+	 */
 	public getActiveCommandNames(): string[] {
-		const names: string[] = [];
+		const names = new Set<string>();
 		for (const [terminalName, terminal] of this._terminals) {
 			if (this._isTerminalAlive(terminal)) {
-				names.push(terminalName.replace(/^Cmd: /, ''));
+				names.add(terminalName.replace(/^Cmd: /, ''));
 			}
 		}
-		return names;
+		for (const t of vscode.window.terminals) {
+			if (t.name.startsWith('Cmd: ')) {
+				names.add(t.name.replace(/^Cmd: /, ''));
+			}
+		}
+		return [...names];
 	}
 
 	public closeTerminal(commandName: string): void {

@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as http from 'http';
 import * as vscode from 'vscode';
 import { CommandsPanel } from './webviewPanel';
 import { CommandsSidebarProvider } from './sidebarProvider';
@@ -381,12 +382,231 @@ class UploadStalenessTracker {
   }
 }
 
+// ── External API hook ─────────────────────────────────────────────
+// When the user sets `commandsExtension.externalApiUrl`, the extension fires
+// lightweight POSTs so other local tools (dashboards, automations, etc.) can
+// react to upload progress and pick up the current command list. Nothing is
+// sent unless the URL is explicitly configured.
+
+function externalApiBase(): string {
+  const cfg = vscode.workspace.getConfiguration('commandsExtension');
+  return (cfg.get<string>('externalApiUrl') ?? '').replace(/\/+$/, '');
+}
+
+function externalApiPost(path: string, payload: unknown): void {
+  const base = externalApiBase();
+  if (!base) return;
+  let url: URL;
+  try {
+    url = new URL(`${base}${path}`);
+  } catch {
+    return;
+  }
+  const body = JSON.stringify(payload);
+  const req = http.request({
+    hostname: url.hostname,
+    port: url.port || 80,
+    path: url.pathname,
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body).toString(),
+    },
+  });
+  req.on('error', () => { /* endpoint may be down — ignore */ });
+  req.write(body);
+  req.end();
+}
+
+function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.Disposable {
+  // Subscribe to /panel/events on the external hub so it can trigger our
+  // commands natively inside VS Code (instead of spawning detached).
+  let stopped = false;
+  let abort: AbortController | null = null;
+
+  async function loop(): Promise<void> {
+    while (!stopped) {
+      const base = externalApiBase();
+      if (!base) {
+        await sleep(2000);
+        continue;
+      }
+      try {
+        abort = new AbortController();
+        const r = await fetch(`${base}/commands/events`, {
+          headers: { accept: 'text/event-stream' },
+          signal: abort.signal,
+        });
+        if (!r.ok || !r.body) {
+          await sleep(2000);
+          continue;
+        }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (!stopped) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf('\n\n')) !== -1) {
+            const frame = buf.slice(0, nl);
+            buf = buf.slice(nl + 2);
+            const m = frame.match(/^data:\s*(.*)$/m);
+            if (!m) continue;
+            try {
+              const ev = JSON.parse(m[1]) as { type?: string; workspacePath?: string; name?: string };
+              if (ev.type === 'run-command' && ev.workspacePath && ev.name) {
+                handleRunCommand(ev.workspacePath, ev.name);
+              }
+            } catch {
+              /* ignore non-json frame */
+            }
+          }
+        }
+      } catch {
+        if (stopped) return;
+      }
+      await sleep(1500);
+    }
+  }
+
+  void loop();
+
+  return new vscode.Disposable(() => {
+    stopped = true;
+    abort?.abort();
+  });
+}
+
+async function handleRunCommand(workspacePath: string, name: string): Promise<void> {
+  // Only react when this VS Code window IS the one for that workspace.
+  const myRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!myRoot || myRoot !== workspacePath) return;
+
+  const cfg = vscode.workspace.getConfiguration('commandsExtension');
+  const configFile = cfg.get<string>('configFile', 'commands-list.json');
+
+  const { loadCommands } = await import('./commandsProvider');
+  const groups = await loadCommands(myRoot, configFile);
+  for (const g of groups) {
+    for (const c of g.commands) {
+      if (c.name === name) {
+        TerminalManager.getInstance().runCommand(c);
+        return;
+      }
+    }
+  }
+
+  // Also check uploads — trigger them through the runner.
+  try {
+    const uploadsFile = cfg.get<string>('uploadsFile', 'server-uploads.local.json');
+    const { loadUploads, resolveServer } = await import('./uploadsProvider');
+    const ud = await loadUploads(myRoot, uploadsFile);
+    for (const g of ud.groups) {
+      for (const u of g.uploads) {
+        if (u.name === name) {
+          if (!uploadRunner) return;
+          const resolved = resolveServer(u, ud.servers);
+          if (!resolved) return;
+          await uploadRunner.run(myRoot, resolved);
+          return;
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function installExternalApiForwarder(): vscode.Disposable {
+  return uploadProgressBus.subscribe((p) => externalApiPost('/events/upload-progress', p));
+}
+
+let extensionContext: vscode.ExtensionContext | null = null;
+
+async function publishCommandsToExternalApi(
+  workspaceRoot: string,
+  configFile: string,
+): Promise<void> {
+  if (!externalApiBase()) return;
+  try {
+    const { loadCommands } = await import('./commandsProvider');
+    const groups = await loadCommands(workspaceRoot, configFile);
+    const favorites = new Set<string>(
+      extensionContext?.workspaceState.get<string[]>('commandsExtension.favorites', []) ?? [],
+    );
+    const running = new Set(TerminalManager.getInstance().getActiveCommandNames());
+    const commands = groups.flatMap((g) =>
+      g.commands.map((c) => ({
+        name: c.name,
+        command: c.command,
+        type: c.type,
+        group: g.name,
+        cwd: c.cwd,
+        detail: c.detail,
+        favorite: favorites.has(`${g.name}:${c.name}`),
+        running: running.has(c.name),
+      })),
+    );
+
+    // Also publish server-uploads as commands of type="upload".
+    try {
+      const cfg = vscode.workspace.getConfiguration('commandsExtension');
+      const uploadsFile = cfg.get<string>('uploadsFile', 'server-uploads.local.json');
+      const { loadUploads } = await import('./uploadsProvider');
+      const uploadsData = await loadUploads(workspaceRoot, uploadsFile);
+      for (const g of uploadsData.groups) {
+        for (const u of g.uploads) {
+          commands.push({
+            name: u.name,
+            command: `[upload] ${u.name}`,
+            // 'upload' isn't in the local union — the hub treats type as a free string.
+            type: 'upload' as unknown as 'terminal',
+            group: g.name || 'Uploads',
+            cwd: undefined,
+            detail: `${u.server ?? u.host ?? 'server'} → ${u.remoteDir ?? ''}`,
+            favorite: favorites.has(`${g.name || 'Uploads'}:${u.name}`),
+            running: false,
+          });
+        }
+      }
+    } catch {
+      /* no uploads file or parse error — skip */
+    }
+
+    externalApiPost('/events/commands', { workspacePath: workspaceRoot, commands });
+  } catch {
+    /* ignore — endpoint may be offline or extension may not be ready */
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
+  extensionContext = context;
+
+  // Re-publish commands whenever terminals open/close so 'running' badges
+  // in the mini-app/panel stay live.
+  TerminalManager.getInstance().onDidChange(() => {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root) return;
+    const configFile = vscode.workspace
+      .getConfiguration('commandsExtension')
+      .get<string>('configFile', 'commands-list.json');
+    void publishCommandsToExternalApi(root, configFile);
+  });
+
   uploadStalenessTracker = new UploadStalenessTracker(context, uploadStalenessBus);
   uploadRunner = new UploadRunner(
     (p) => uploadProgressBus.emit(p),
     (key, filePaths, partial, scope) => uploadStalenessTracker!.onUploadDone(key, filePaths, partial, scope)
   );
+
+  context.subscriptions.push(installExternalApiForwarder());
+  context.subscriptions.push(installExternalApiSubscriber(context));
 
   const openPanelCommand = vscode.commands.registerCommand(
     'commandsExtension.openPanel',
@@ -426,6 +646,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const onFileChange = () => {
       CommandsPanel.refresh();
       sidebarProvider.refresh();
+      void publishCommandsToExternalApi(vscode.workspace.workspaceFolders![0].uri.fsPath, configFile);
     };
 
     const onUploadsConfigChange = () => {
@@ -465,6 +686,10 @@ export function activate(context: vscode.ExtensionContext): void {
     uploadStalenessTracker
       .refreshScopesFromConfig(vscode.workspace.workspaceFolders[0].uri.fsPath, uploadsFile)
       .catch(() => undefined);
+
+    // Initial publish so the external endpoint has commands without waiting
+    // for a file edit (no-op when externalApiUrl is empty).
+    void publishCommandsToExternalApi(vscode.workspace.workspaceFolders[0].uri.fsPath, configFile);
   }
 }
 

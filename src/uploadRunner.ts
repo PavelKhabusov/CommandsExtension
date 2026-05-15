@@ -1,9 +1,46 @@
 import * as fs from 'fs';
+import * as http from 'http';
 import * as vscode from 'vscode';
 import * as ftp from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
 import { ResolvedUpload, UploadProgress, UploadStatus } from './uploadsTypes';
 import { resolveItems, ResolvedItem } from './uploadsProvider';
+
+/**
+ * Ask the external hub (commandsExtension.externalApiUrl) to prepare the
+ * network (stop the VPN if needed) before we open the FTP/SFTP connection.
+ * The hub blocks its 204 until the network actually reports ready, so by the
+ * time we get the response there's no proxy/tun race. If no hub is configured
+ * or it isn't running, we just continue.
+ */
+function prepareUpload(uploadKey: string): Promise<void> {
+  return new Promise((resolve) => {
+    const cfg = vscode.workspace.getConfiguration('commandsExtension');
+    const base = (cfg.get<string>('externalApiUrl') ?? 'http://127.0.0.1:8765').replace(/\/+$/, '');
+    let url: URL;
+    try { url = new URL(`${base}/events/upload-prepare`); }
+    catch { return resolve(); }
+    const body = JSON.stringify({ uploadKey });
+    const req = http.request({
+      hostname: url.hostname,
+      port: url.port || 80,
+      path: url.pathname,
+      method: 'POST',
+      timeout: 8000,
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body).toString(),
+      },
+    }, (res) => {
+      res.on('data', () => {});
+      res.on('end', resolve);
+    });
+    req.on('error', () => resolve());
+    req.on('timeout', () => { req.destroy(); resolve(); });
+    req.write(body);
+    req.end();
+  });
+}
 
 export type ProgressCallback = (p: UploadProgress) => void;
 
@@ -75,6 +112,9 @@ export class UploadRunner {
           return;
         }
       }
+
+      emit({ status: 'connecting', message: 'Preparing network…' });
+      await prepareUpload(key);
 
       emit({ status: 'connecting', message: `Connecting to ${upload.host}…` });
 

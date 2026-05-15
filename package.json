@@ -62,6 +62,11 @@
           "type": "string",
           "default": "server-uploads.local.json",
           "description": "Path to server uploads configuration file (relative to workspace root). The default name ends with .local.json so it stays out of git when matched by common ignore patterns."
+        },
+        "commandsExtension.externalApiUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional base URL of an external HTTP service that wants notifications from this extension. When set, the extension POSTs upload progress events to {url}/events/upload-progress and the merged command list (commands-list.json + npm scripts + .ps1) to {url}/events/commands. Leave empty to disable."
         }
       }
     }
