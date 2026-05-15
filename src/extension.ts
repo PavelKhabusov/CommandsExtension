@@ -252,8 +252,11 @@ class UploadStalenessTracker {
   }
 
   public markSynced(key: string): void {
-    const snap = this._snapshots.get(key);
-    if (!snap) return;
+    let snap = this._snapshots.get(key);
+    if (!snap) {
+      snap = new Map<string, number>();
+      this._snapshots.set(key, snap);
+    }
     for (const p of snap.keys()) {
       try { snap.set(p, fs.statSync(p).mtimeMs); } catch { /* skip */ }
     }
