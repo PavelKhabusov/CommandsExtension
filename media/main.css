@@ -893,8 +893,8 @@ body {
 
 #uploads-wrapper {
 	flex-shrink: 0;
-	height: 20vh;
-	min-height: 15vh;
+	height: auto;
+	min-height: 0;
 	max-height: 80vh;
 	overflow-y: auto;
 	border-top: 1px solid var(--vscode-panel-border);
@@ -1007,6 +1007,7 @@ body {
 .uploads-body {
 	display: flex;
 	flex-direction: column;
+	padding-bottom: 40px;
 }
 
 .uploads-body.collapsed {
