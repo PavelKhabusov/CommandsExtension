@@ -1304,7 +1304,13 @@
 	function createAutoUploadCard(cmd) {
 		const card = document.createElement('div');
 		card.className = 'upload-auto-item';
-		card.title = 'Upload only modified files to ' + cmd.display;
+		const fileList = Array.from(cmd.staleFiles).map(function(p) {
+			var parts = p.replace(/\\/g, '/').split('/');
+			return parts.length >= 2 ? parts.slice(-2).join('/') : p;
+		});
+		card.title = fileList.length
+			? 'Upload only modified files to ' + cmd.display + ':\n' + fileList.join('\n')
+			: 'Upload only modified files to ' + cmd.display;
 
 		const icon = document.createElement('span');
 		icon.className = 'upload-auto-icon';
