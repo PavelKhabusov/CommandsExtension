@@ -529,6 +529,74 @@ function installExternalApiForwarder(): vscode.Disposable {
 
 let extensionContext: vscode.ExtensionContext | null = null;
 
+interface UploadRecommendation {
+  display: string;
+  uploadKeys: string[];
+  staleCount: number;
+  staleFiles: string[];
+}
+
+/**
+ * Set-cover over per-server upload candidates. Mirrors computeAutoUploadCmds()
+ * in media/main.js so the hub sees the same recommendations the local panel
+ * shows in its "auto upload" cards.
+ */
+function computeUploadRecommendations(
+  uploadsData: { groups: { name: string; uploads: { name: string; protocol?: string; user?: string; host?: string; port?: number }[] }[] },
+  stalenessMap: Record<string, StalenessInfo>,
+): UploadRecommendation[] {
+  const serverMap = new Map<string, {
+    display: string;
+    candidates: { key: string; staleFiles: Set<string>; trackedCount: number }[];
+  }>();
+  for (const g of uploadsData.groups) {
+    for (const u of g.uploads) {
+      const key = `${g.name || 'Uploads'}:${u.name}`;
+      const info = stalenessMap[key];
+      if (!info || info.staleness !== 'stale' || !info.staleCount) continue;
+      const serverKey = `${u.protocol ?? ''}://${u.user ?? ''}@${u.host ?? ''}:${u.port ?? ''}`;
+      let entry = serverMap.get(serverKey);
+      if (!entry) {
+        entry = { display: `${u.user ?? ''}@${u.host ?? ''}`, candidates: [] };
+        serverMap.set(serverKey, entry);
+      }
+      entry.candidates.push({
+        key,
+        staleFiles: new Set(info.staleFiles ?? []),
+        trackedCount: info.trackedCount ?? 0,
+      });
+    }
+  }
+
+  const result: UploadRecommendation[] = [];
+  for (const entry of serverMap.values()) {
+    const sorted = entry.candidates.slice().sort(
+      (a, b) => (b.staleFiles.size - a.staleFiles.size) || (a.trackedCount - b.trackedCount),
+    );
+    const remaining = new Set<string>();
+    for (const c of entry.candidates) for (const f of c.staleFiles) remaining.add(f);
+    const chosen: typeof sorted = [];
+    for (const c of sorted) {
+      if (!remaining.size) break;
+      let covers = false;
+      for (const f of c.staleFiles) { if (remaining.has(f)) { covers = true; break; } }
+      if (!covers) continue;
+      chosen.push(c);
+      for (const f of c.staleFiles) remaining.delete(f);
+    }
+    if (!chosen.length) continue;
+    const combined = new Set<string>();
+    for (const c of chosen) for (const f of c.staleFiles) combined.add(f);
+    result.push({
+      display: entry.display,
+      uploadKeys: chosen.map((c) => c.key),
+      staleCount: combined.size,
+      staleFiles: Array.from(combined),
+    });
+  }
+  return result;
+}
+
 async function publishCommandsToExternalApi(
   workspaceRoot: string,
   configFile: string,
@@ -541,7 +609,7 @@ async function publishCommandsToExternalApi(
       extensionContext?.workspaceState.get<string[]>('commandsExtension.favorites', []) ?? [],
     );
     const running = new Set(TerminalManager.getInstance().getActiveCommandNames());
-    const commands = groups.flatMap((g) =>
+    const commands: Array<Record<string, unknown>> = groups.flatMap((g) =>
       g.commands.map((c) => ({
         name: c.name,
         command: c.command,
@@ -555,31 +623,49 @@ async function publishCommandsToExternalApi(
     );
 
     // Also publish server-uploads as commands of type="upload".
+    let uploadRecommendations: UploadRecommendation[] = [];
     try {
       const cfg = vscode.workspace.getConfiguration('commandsExtension');
       const uploadsFile = cfg.get<string>('uploadsFile', 'server-uploads.local.json');
       const { loadUploads } = await import('./uploadsProvider');
       const uploadsData = await loadUploads(workspaceRoot, uploadsFile);
+      const stalenessMap = uploadStalenessTracker?.getStalenessMap() ?? {};
       for (const g of uploadsData.groups) {
         for (const u of g.uploads) {
+          const groupName = g.name || 'Uploads';
+          const key = `${groupName}:${u.name}`;
+          const info = stalenessMap[key];
           commands.push({
             name: u.name,
             command: `[upload] ${u.name}`,
-            // 'upload' isn't in the local union — the hub treats type as a free string.
-            type: 'upload' as unknown as 'terminal',
-            group: g.name || 'Uploads',
+            type: 'upload',
+            group: groupName,
             cwd: undefined,
             detail: `${u.server ?? u.host ?? 'server'} → ${u.remoteDir ?? ''}`,
-            favorite: favorites.has(`${g.name || 'Uploads'}:${u.name}`),
+            favorite: favorites.has(`${groupName}:${u.name}`),
             running: false,
+            uploadKey: key,
+            staleness: info
+              ? {
+                  staleness: info.staleness,
+                  staleCount: info.staleCount,
+                  staleFiles: info.staleFiles,
+                  trackedCount: info.trackedCount,
+                }
+              : undefined,
           });
         }
       }
+      uploadRecommendations = computeUploadRecommendations(uploadsData, stalenessMap);
     } catch {
       /* no uploads file or parse error — skip */
     }
 
-    externalApiPost('/events/commands', { workspacePath: workspaceRoot, commands });
+    externalApiPost('/events/commands', {
+      workspacePath: workspaceRoot,
+      commands,
+      uploadRecommendations,
+    });
   } catch {
     /* ignore — endpoint may be offline or extension may not be ready */
   }
@@ -607,6 +693,24 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(installExternalApiForwarder());
   context.subscriptions.push(installExternalApiSubscriber(context));
+
+  // Re-publish commands (with refreshed per-upload staleness + recommendations)
+  // whenever staleness changes. Debounced so rapid file events don't spam.
+  let stalePublishTimer: NodeJS.Timeout | undefined;
+  const stalenessSub = uploadStalenessBus.subscribe(() => {
+    if (stalePublishTimer) clearTimeout(stalePublishTimer);
+    stalePublishTimer = setTimeout(() => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!root) return;
+      const cf = vscode.workspace
+        .getConfiguration('commandsExtension')
+        .get<string>('configFile', 'commands-list.json');
+      void publishCommandsToExternalApi(root, cf);
+    }, 200);
+  });
+  context.subscriptions.push(stalenessSub, new vscode.Disposable(() => {
+    if (stalePublishTimer) clearTimeout(stalePublishTimer);
+  }));
 
   const openPanelCommand = vscode.commands.registerCommand(
     'commandsExtension.openPanel',
