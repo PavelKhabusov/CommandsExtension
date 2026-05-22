@@ -48,6 +48,9 @@ export type UploadStatus = 'idle' | 'connecting' | 'running' | 'done' | 'error' 
 export interface UploadProgress {
   uploadKey: string;
   status: UploadStatus;
+  /** Workspace root this upload runs from — surfaced to the hub so it can
+   *  apply per-project rules (e.g. keep VPN on for some projects). */
+  workspacePath?: string;
   message?: string;
   currentFile?: string;
   bytes?: number;

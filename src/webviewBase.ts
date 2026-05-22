@@ -378,6 +378,10 @@ export class WebviewMessageHandler {
 
 	private async _setFavorites(favorites: string[]): Promise<void> {
 		await this._context.workspaceState.update('commandsExtension.favorites', favorites);
+		// Notify the external hub immediately — without this, the new favorite
+		// state only reaches downstream UIs (home-kit-dash etc.) on the next
+		// unrelated publish trigger (terminal open/close, file edit, etc.).
+		void vscode.commands.executeCommand('commandsExtension._republishExternal');
 	}
 
 	private async _setCollapsedGroups(groups: string[]): Promise<void> {

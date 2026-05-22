@@ -110,15 +110,32 @@ export class TerminalManager {
 				: cmd.command;
 
 		// Check if we already have a terminal for this command that is still alive
-		const existing = this._terminals.get(terminalName);
-		if (existing && this._isTerminalAlive(existing)) {
+		let existing = this._terminals.get(terminalName);
+		if (existing && !this._isTerminalAlive(existing)) {
+			this._terminals.delete(terminalName);
+			existing = undefined;
+		}
+		// Fallback: a pre-existing terminal with the same name may not have been
+		// adopted yet (e.g. when runCommand fires from an SSE subscriber that
+		// runs before onDidOpenTerminal had a chance to add it, or right after
+		// a window reload where the constructor's `for (const t of terminals)`
+		// snapshot was empty). Look directly at the live VS Code terminals so
+		// `Cmd: deploy` re-uses an existing one instead of spawning a second
+		// terminal with the same name.
+		if (!existing) {
+			for (const t of vscode.window.terminals) {
+				if (t.name === terminalName) {
+					existing = t;
+					this._terminals.set(terminalName, t);
+					break;
+				}
+			}
+		}
+		if (existing) {
 			existing.show();
 			existing.sendText(commandText);
 			return;
 		}
-
-		// Terminal was closed or doesn't exist — remove stale entry and create new
-		this._terminals.delete(terminalName);
 
 		const terminalOptions: vscode.TerminalOptions = {
 			name: terminalName,

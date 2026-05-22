@@ -13,14 +13,16 @@ import { resolveItems, ResolvedItem } from './uploadsProvider';
  * time we get the response there's no proxy/tun race. If no hub is configured
  * or it isn't running, we just continue.
  */
-function prepareUpload(uploadKey: string): Promise<void> {
+function prepareUpload(uploadKey: string, workspacePath?: string): Promise<void> {
   return new Promise((resolve) => {
     const cfg = vscode.workspace.getConfiguration('commandsExtension');
     const base = (cfg.get<string>('externalApiUrl') ?? 'http://127.0.0.1:8765').replace(/\/+$/, '');
     let url: URL;
     try { url = new URL(`${base}/events/upload-prepare`); }
     catch { return resolve(); }
-    const body = JSON.stringify({ uploadKey });
+    // workspacePath lets the hub apply per-project upload settings
+    // (e.g. "keep VPN on"). Omitted if no workspace folder is open.
+    const body = JSON.stringify({ uploadKey, workspacePath });
     const req = http.request({
       hostname: url.hostname,
       port: url.port || 80,
@@ -82,7 +84,11 @@ export class UploadRunner {
     this._active.set(key, ctrl);
 
     const emit = (patch: Partial<UploadProgress> & { status: UploadStatus }) => {
-      const merged: UploadProgress = { uploadKey: key, ...patch };
+      const merged: UploadProgress = {
+        uploadKey: key,
+        workspacePath: workspaceRoot,
+        ...patch,
+      };
       this._lastStatus.set(key, merged);
       this._onProgress(merged);
     };
@@ -114,7 +120,7 @@ export class UploadRunner {
       }
 
       emit({ status: 'connecting', message: 'Preparing network…' });
-      await prepareUpload(key);
+      await prepareUpload(key, workspaceRoot);
 
       emit({ status: 'connecting', message: `Connecting to ${upload.host}…` });
 

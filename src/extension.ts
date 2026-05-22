@@ -441,6 +441,17 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
           await sleep(2000);
           continue;
         }
+        // We just connected (or reconnected after a hub restart) — its in-
+        // memory commands cache is empty, so push the current snapshot now.
+        // Otherwise the desktop/mini-app sees an empty list (no favorites,
+        // no recommendations) until an unrelated trigger fires.
+        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (wsRoot) {
+          const cf = vscode.workspace
+            .getConfiguration('commandsExtension')
+            .get<string>('configFile', 'commands-list.json');
+          void publishCommandsToExternalApi(wsRoot, cf);
+        }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = '';
@@ -455,9 +466,14 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
             const m = frame.match(/^data:\s*(.*)$/m);
             if (!m) continue;
             try {
-              const ev = JSON.parse(m[1]) as { type?: string; workspacePath?: string; name?: string };
+              const ev = JSON.parse(m[1]) as {
+                type?: string;
+                workspacePath?: string;
+                name?: string;
+                stale?: boolean;
+              };
               if (ev.type === 'run-command' && ev.workspacePath && ev.name) {
-                handleRunCommand(ev.workspacePath, ev.name);
+                handleRunCommand(ev.workspacePath, ev.name, ev.stale === true);
               }
             } catch {
               /* ignore non-json frame */
@@ -479,7 +495,11 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
   });
 }
 
-async function handleRunCommand(workspacePath: string, name: string): Promise<void> {
+async function handleRunCommand(
+  workspacePath: string,
+  name: string,
+  stale = false,
+): Promise<void> {
   // Only react when this VS Code window IS the one for that workspace.
   const myRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!myRoot || myRoot !== workspacePath) return;
@@ -498,7 +518,9 @@ async function handleRunCommand(workspacePath: string, name: string): Promise<vo
     }
   }
 
-  // Also check uploads — trigger them through the runner.
+  // Also check uploads — trigger them through the runner. When `stale` is set,
+  // pass a fileFilter of the currently-tracked modified files so the runner
+  // only ships changes since the last clean upload.
   try {
     const uploadsFile = cfg.get<string>('uploadsFile', 'server-uploads.local.json');
     const { loadUploads, resolveServer } = await import('./uploadsProvider');
@@ -509,7 +531,19 @@ async function handleRunCommand(workspacePath: string, name: string): Promise<vo
           if (!uploadRunner) return;
           const resolved = resolveServer(u, ud.servers);
           if (!resolved) return;
-          await uploadRunner.run(myRoot, resolved);
+          let fileFilter: Set<string> | undefined;
+          if (stale) {
+            const key = `${g.name || 'Uploads'}:${u.name}`;
+            const info = uploadStalenessTracker?.getStalenessMap()[key];
+            if (info && info.staleness === 'stale' && info.staleFiles.length > 0) {
+              fileFilter = new Set(info.staleFiles);
+            } else {
+              // Nothing modified — bail out silently instead of running a
+              // full upload, otherwise "Modified" silently behaves like "All".
+              return;
+            }
+          }
+          await uploadRunner.run(myRoot, resolved, fileFilter);
           return;
         }
       }
@@ -720,6 +754,23 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(openPanelCommand);
 
+  // Internal hook used by the webview's toggleFavorite (and any other
+  // workspaceState mutator that needs the hub to see the new favorites
+  // list right away). Bound via vscode.commands so webviewBase doesn't
+  // need a direct reference to publishCommandsToExternalApi.
+  const republishCommand = vscode.commands.registerCommand(
+    'commandsExtension._republishExternal',
+    () => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!root) return;
+      const cf = vscode.workspace
+        .getConfiguration('commandsExtension')
+        .get<string>('configFile', 'commands-list.json');
+      void publishCommandsToExternalApi(root, cf);
+    },
+  );
+  context.subscriptions.push(republishCommand);
+
   const sidebarProvider = new CommandsSidebarProvider(context.extensionUri, context);
   const sidebarRegistration = vscode.window.registerWebviewViewProvider(
     CommandsSidebarProvider.viewType,
@@ -794,6 +845,19 @@ export function activate(context: vscode.ExtensionContext): void {
     // Initial publish so the external endpoint has commands without waiting
     // for a file edit (no-op when externalApiUrl is empty).
     void publishCommandsToExternalApi(vscode.workspace.workspaceFolders[0].uri.fsPath, configFile);
+
+    // Heartbeat republish — defends against a hub restart that loses its
+    // in-memory pushedCommands cache. PUSHED_TTL_MS in the hub is 5min, so
+    // 30s here keeps the cache fresh with plenty of margin and is cheap.
+    const heartbeat = setInterval(() => {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!root) return;
+      const cf = vscode.workspace
+        .getConfiguration('commandsExtension')
+        .get<string>('configFile', 'commands-list.json');
+      void publishCommandsToExternalApi(root, cf);
+    }, 30_000);
+    context.subscriptions.push(new vscode.Disposable(() => clearInterval(heartbeat)));
   }
 }
 
