@@ -4,3 +4,6 @@ node_modules/
 *.vsix
 dist/
 .DS_Store
+# Local test data for the project (your own workspace's commands-list lives here too;
+# this gitignore is for the *extension repo* — projects using the extension are unaffected).
+/commands-list.json

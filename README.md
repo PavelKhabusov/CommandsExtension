@@ -239,12 +239,148 @@ These appear as `npm run build`, `npm run test`, `npm run start`.
 
 ---
 
+### Claude Hooks Manager
+
+Manage [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks)
+from the panel instead of editing `settings.json` by hand. The **Claude Hooks**
+section lists every hook found in:
+
+| File                             | Source label |
+|----------------------------------|--------------|
+| `.claude/settings.json`          | 📁 project (committed)             |
+| `.claude/settings.local.json`    | 🔒 local (gitignored)              |
+| `~/.claude/settings.json`        | 🌍 user-global (all your projects) |
+
+By default the section shows only **project** + **local** hooks — the ones
+actually scoped to this workspace. User-global hooks (shared across every
+project on your machine) are hidden behind the `🌍` toggle in the header
+to keep your project view focused. Toggle it on to also list them.
+
+Section header buttons (visible on hover):
+
+| Button | What it does |
+|--------|--------------|
+| `+`    | Open the editor to add a new hook                                              |
+| `📋`   | Paste a hook JSON from clipboard (opens the editor pre-filled)                |
+| `🌍`   | Toggle visibility of user-global hooks                                        |
+| `📂`   | Quick-open any of the three `settings.json` files (no hook needed)            |
+
+Each card has:
+- a **toggle switch** to disable / re-enable the hook (disabled hooks are
+  pulled out of `settings.json` and cached in workspace state; toggling on
+  restores them; the row stays in the same slot — ordering is stable across
+  toggles)
+- a **clickable script path** for hooks whose command points to a
+  `.sh` / `.py` / `.js` / etc. file (with `$CLAUDE_PROJECT_DIR` and `~/`
+  expansion) — click to open the script in the editor
+- a colored target pill (📁 blue / 🔒 yellow / 🌍 purple) — click to
+  open the underlying `settings.json`
+- right-click context menu: **Edit** / **Copy to clipboard** (as JSON) /
+  **Delete**
+
+The **+ Add hook** button opens an inline editor where you pick:
+1. **Event** — `Stop`, `SubagentStop`, `UserPromptSubmit`, `PreToolUse`,
+   `PostToolUse`, `Notification`, `SessionStart`, `SessionEnd`, `PreCompact`.
+   Each group shows a short description of when it fires.
+2. **Matcher** — optional regex, only relevant for the events that take one.
+3. **Target file** — project / local / user-global. Writes to user-global
+   ask for confirmation the first time.
+4. **Action**:
+   - **Preset** — `Play sound`, `Desktop notification`, `Append timestamp`,
+     `Wait N seconds`, `Open URL / file / app`. Each preset emits a
+     cross-platform shell command (see the table above; ⚠ icon flags
+     presets whose tool isn't detected on this OS).
+   - **Existing command** — pick one from `commands-list.json`. The
+     actual shell script is copied into the hook so you can tweak it
+     per-hook without affecting the original command.
+   - **Custom shell** — write whatever you want.
+5. **Shell script** — multi-line editable, even for presets/command refs.
+6. **Timeout** (optional, seconds).
+
+**Copy / paste across projects** — right-click → **Copy to clipboard** writes
+a small `{event,matcher,command,timeout}` JSON to the clipboard. In another
+project, hit the 📋 button in the **Claude Hooks** section header to open
+the editor pre-filled with the pasted spec.
+
+---
+
+### Combined Operations
+
+Bundle terminal commands, server uploads, and small helpers into a single
+ordered sequence. Each step in a combined operation can be:
+
+| Step type      | What it does                                                                       |
+|----------------|------------------------------------------------------------------------------------|
+| `command`      | Runs an existing command from `commands-list.json` / `package.json` / `*.ps1`. With Shell Integration enabled (default for bash/zsh/fish/pwsh/cmd) the runner waits for it to exit; if SI is unavailable, it falls back to fire-and-go. |
+| `upload`       | Runs a server upload by key (`<group>:<name>`), waits for completion.              |
+| `auto-upload`  | Picks the optimal upload set-cover for a server (`user@host`) — exactly what the recommended auto-upload card does locally. |
+| `vscode-cmd`   | Invokes any registered VS Code command (e.g. `workbench.action.reloadWindow`). Picker uses VS Code's native quickPick with fuzzy search over all 1000+ command IDs. |
+| `wait`         | `await sleep(seconds * 1000)` — internal pause, cancellable, no terminal.          |
+| `open`         | Opens a URL/file via `vscode.env.openExternal`; for `app` targets uses the OS shell (`gtk-launch` → binary fallback on Linux, `open -a` on macOS, `start ""` on Windows). |
+| `sound`        | Plays a short sound clip (complete / alert / error) — best-effort cross-platform. |
+| `notification` | Shows a VS Code notification (info / warn / error).                                |
+
+Combined operations live in the same `commands-list.json` under a new
+`combined` field. Edit them via the "+" button in the **Combined
+Operations** section of the panel: an inline editor opens with
+drag-to-reorder steps and an "Add step ▾" submenu (7 step types via
+VS Code's native input box / quick-pick prompts). Run from the card
+(click), cancel the running op via the same click; right-click for
+Run / Edit / Duplicate / Delete.
+
+Each card lists its steps with a per-step **checkbox** — quickly skip
+individual steps without removing them (e.g. include `command` and
+`upload` but skip the `notification`). State persists in
+`commands-list.json`.
+
+When a step is uploading, the card shows the step number ("Running
+2/3: …") and the standard upload progress bar inline.
+
+`stopOnError` (default `true`) — a failed step (upload error, non-zero
+exit code) skips the remaining steps. Toggle in the editor.
+
+**Common use case:** after a local install you want VS Code to pick up
+the new build. Bundle `npm run install-local` + `vscode-cmd:
+workbench.action.reloadWindow` into one "Install & Reload" operation —
+one click, both steps, and the window reloads right when the install
+finishes.
+
+---
+
+### Cross-platform requirements
+
+`sound`, `notification`, and `open` steps (in Combined Operations) and
+the matching presets (in Claude Hooks Manager) rely on small system
+utilities. Most are already installed on desktop Linux / macOS / Windows;
+some Linux setups (servers, minimal distros) need extras.
+
+| Feature        | Linux                                            | macOS                       | Windows                                      |
+|----------------|--------------------------------------------------|-----------------------------|----------------------------------------------|
+| Play sound     | `paplay` (pulseaudio-utils) or `aplay`           | `afplay` (built-in)         | PowerShell `[console]::beep()` (built-in)    |
+| Notification   | `notify-send` (libnotify-bin)                    | `osascript` (built-in)      | PowerShell + .NET MessageBox (built-in); `BurntToast` module for toast notifications |
+| Open URL/file/app | `xdg-open` (xdg-utils)                        | `open` (built-in)           | `start ""` (built-in)                        |
+
+**Install commands when something's missing:**
+
+- Ubuntu / Debian: `sudo apt install libnotify-bin pulseaudio-utils xdg-utils`
+- Fedora: `sudo dnf install libnotify pulseaudio-utils xdg-utils`
+- Arch: `sudo pacman -S libnotify libpulse xdg-utils`
+- macOS: everything ships with the OS
+- Windows: nothing required for basics; for richer toast notifications, run `Install-Module -Name BurntToast -Force` in PowerShell
+
+The editor's "Add step ▾" submenu shows a ⚠ icon next to presets
+whose underlying tool isn't detected on the current OS, with a tooltip
+hint about what to install.
+
+---
+
 ## Configuration
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `commandsExtension.configFile` | `commands-list.json` | Path to commands config file (relative to workspace root) |
 | `commandsExtension.uploadsFile` | `server-uploads.local.json` | Path to server uploads config file (relative to workspace root) |
+| `commandsExtension.externalApiUrl` | `""` | Optional base URL of an external hub that receives upload / staleness / combined-op events and the merged command list. Empty disables. |
 
 ---
 

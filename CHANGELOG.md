@@ -2,6 +2,32 @@
 
 All notable changes to Commands Extension are documented here.
 
+## [0.0.15] - 2026-06-08
+
+### Added
+- **Claude Hooks Manager** — new section in the panel for managing Claude Code hooks (`Stop`, `SubagentStop`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `SessionStart`, `SessionEnd`, `PreCompact`) across `.claude/settings.json`, `.claude/settings.local.json`, and `~/.claude/settings.json`. Each hook has a real toggle switch (backed by `workspaceState` cache so disabled hooks survive across sessions, with stable ordering so the row doesn't jump when toggled), inline editor with event/matcher/target/action picker and editable shell script field, and 5 presets (Play sound, Desktop notification, Append timestamp, Wait N seconds, Open URL/file/app) plus "Existing command" linkage that pulls the actual script body from `commands-list.json`. Header buttons: `+` add, `📋` paste from clipboard, `🌍` show user-global hooks (off by default — keeps your project view focused), `📂` quick-open any of the three settings files. Section intro + per-event descriptions explain what each hook does. Per-card features: clickable script paths (`.sh`/`.py`/etc., with `$CLAUDE_PROJECT_DIR` and `~/` expansion) open the script in the editor; color-coded project / local / user-global pills open the underlying settings file; right-click → Edit / Copy to clipboard / Delete. Writes to `~/.claude/settings.json` ask for confirmation the first time.
+- **Combined Operations** — new section in the panel for composite commands that mix terminal commands, server uploads (full or auto/set-cover), VS Code commands, and native helpers (wait, open URL/file/app, play sound, notification) into ordered sequences (8 step types total). Inline drag-to-reorder editor with "Add step ▾" submenu; per-step toggle so individual steps can be skipped without removal; per-step progress in the card ("Running 2/3: …" with the standard upload progress bar inline when the current step is an upload), `stopOnError` toggle, Cancel mid-run. Terminal command steps use VS Code Shell Integration to wait on exit codes; falls back to fire-and-go when SI is unavailable. The `vscode-cmd` step lets a combined op invoke any registered VS Code command (e.g. `workbench.action.reloadWindow` after a local install) — pick via the native quickPick over all 1000+ command IDs. The `wait` / `open` / `sound` / `notification` editors use native `showInputBox` / `showQuickPick` (replacing `window.prompt`, which doesn't work in VS Code webviews). Defined in `commands-list.json` under a new `combined` field. Published to `commandsExtension.externalApiUrl` as the `combined` array in `/events/commands` + a new `/events/combined-progress` event so external hubs can render read-only cards and live progress.
+- **Cross-platform helpers** — new `src/platformHelpers.ts` detects available system utilities (sound, notification, open) per OS and provides fallback chains; ⚠ icons in the editor submenu mark presets whose underlying tool isn't installed. On Linux, `open app` uses `gtk-launch` with a binary-name fallback (instead of `xdg-open`, which only handles URLs/files). README documents apt/dnf/pacman install commands.
+- **Upload a single file from right-click** — new "Commands Extension: Upload to Server" context-menu command on any tracked file (Explorer, editor body, and editor tab menus). Uploads just that one file to the exact remote location it maps to; when several servers cover the file you pick the target. Only shown in projects that define server uploads.
+- **External hub integration** — optional `commandsExtension.externalApiUrl` lets the extension POST upload progress, the merged command list, and per-upload staleness/recommendations to an external HTTP service. Includes instant republish on changes and a 30s heartbeat so the hub survives restarts.
+- **Modified-files hover** — hovering an auto-upload card lists the files changed since the last sync.
+
+### Changed
+- **Server name in upload cards** — the card subtitle now shows the referenced server name before the account (`server · user@host · /remote/dir`) so it's clearer which server an upload targets.
+- **Auto-fit upload block height** — the Server Uploads block grows to fit all cards instead of clipping.
+- **`workspacePath` in events** — upload events now carry the workspace path so the hub can apply per-project rules (e.g. keep VPN on for some projects).
+
+### Fixed
+- **Mark as synced** — no longer a no-op for uploads that had no prior snapshot.
+
+## [0.0.14] - 2026-05-11
+
+### Added
+- **File staleness tracking** — the extension tracks which uploaded files have changed since the last successful upload, marking each upload as stale or clean and showing the stale count.
+- **Smart auto-upload** — a generated "Upload Modified" action per server uploads only the files changed since the last sync, instead of re-sending everything.
+- **New-in-scope detection** — files that newly match an upload's `items` patterns are detected and surfaced as pending upload.
+- **Cross-config propagation** — staleness propagates across multiple upload configs that share the same files.
+
 ## [0.0.13] - 2026-05-05
 
 ### Added

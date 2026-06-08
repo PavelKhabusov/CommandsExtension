@@ -1,11 +1,14 @@
 import * as vscode from 'vscode';
 import { CommandDefinition } from './types';
-import { loadCommands, addCommandToFile, moveCommandInFile, removeGroupFromFile, removeCommandFromFile } from './commandsProvider';
+import { loadCommands, addCommandToFile, moveCommandInFile, removeGroupFromFile, removeCommandFromFile, loadCombinedOps, saveCombinedOp, deleteCombinedOp } from './commandsProvider';
 import { getMarketplaceTemplates } from './marketplace';
 import { TerminalManager } from './terminalManager';
 import { loadUploads, uploadKey, pickFilesAndAppend, addUploadItems, addUploadExcludes, pickExcludePatternsForUpload, ensureUploadsFile, resolveServer } from './uploadsProvider';
-import { uploadRunner, uploadStalenessTracker, StalenessInfo } from './extension';
+import { uploadRunner, uploadStalenessTracker, StalenessInfo, combinedOpRunner } from './extension';
 import { UploadDefinition, ServerDefinition } from './uploadsTypes';
+import { CombinedOpDefinition, CombinedOpProgress } from './combinedOpsTypes';
+import { getPresetAvailability, soundCommand, notificationCommand, openCommand } from './platformHelpers';
+import { loadAllHooks, saveHook, deleteHook, setHookEnabled, ALL_HOOK_EVENTS, MATCHER_EVENTS, HookEntry, HookEvent, HookTargetFile, getHookFilePaths } from './claudeHooksProvider';
 
 export function getNonce(): string {
 	let text = '';
@@ -92,7 +95,9 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 			<p>Add a <code>commands-list.json</code> file or <code>package.json</code> scripts to your workspace.</p>
 		</div>
 	</div>
+	<div id="combined-wrapper"></div>
 	<div id="uploads-wrapper"></div>
+	<div id="hooks-wrapper"></div>
 	<div id="marketplace-wrapper"></div>
 	<script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
@@ -338,6 +343,185 @@ export class WebviewMessageHandler {
 				await vscode.window.showTextDocument(doc);
 				break;
 			}
+			case 'setCombinedCollapsed':
+				await this._context.workspaceState.update('commandsExtension.combinedCollapsed', !!message.value);
+				break;
+			case 'runCombinedOp': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot || !combinedOpRunner) return;
+				const ops = await loadCombinedOps(wsRoot, getConfigFile());
+				const op = ops.find((o) => o.name === message.opName);
+				if (!op) {
+					vscode.window.showWarningMessage(`Combined op "${message.opName}" not found.`);
+					return;
+				}
+				void combinedOpRunner.run(op).catch((e) => {
+					vscode.window.showErrorMessage(`Combined op failed: ${e instanceof Error ? e.message : e}`);
+				});
+				break;
+			}
+			case 'cancelCombinedOp': {
+				if (!combinedOpRunner || !message.opName) return;
+				combinedOpRunner.cancel(message.opName as string);
+				break;
+			}
+			case 'saveCombinedOp': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot || !message.op) return;
+				const op = message.op as CombinedOpDefinition;
+				const originalName = message.originalName as string | undefined;
+				await saveCombinedOp(wsRoot, op, originalName, getConfigFile());
+				this._refresh();
+				break;
+			}
+			case 'rpcInputBox': {
+				const result = await vscode.window.showInputBox({
+					title: message.title as string | undefined,
+					value: message.defaultValue as string | undefined,
+					placeHolder: message.placeholder as string | undefined,
+					prompt: message.prompt as string | undefined,
+				});
+				this._postMessage({ type: 'rpcResult', _reqId: message._reqId, result });
+				break;
+			}
+			case 'rpcQuickPick': {
+				const result = await vscode.window.showQuickPick(message.items as string[], {
+					title: message.title as string | undefined,
+					placeHolder: message.placeholder as string | undefined,
+				});
+				this._postMessage({ type: 'rpcResult', _reqId: message._reqId, result });
+				break;
+			}
+			case 'pickVscodeCommand': {
+				// Native quickPick — there can be 1000+ command IDs registered,
+				// so we feed them all and let VS Code's built-in fuzzy filter do
+				// the heavy lifting instead of transferring everything to the
+				// webview.
+				const all = await vscode.commands.getCommands(true);
+				all.sort();
+				const pick = await vscode.window.showQuickPick(all, {
+					title: 'Pick a VS Code command',
+					placeHolder: 'Search by ID (e.g. workbench.action.reloadWindow)',
+					matchOnDescription: true,
+				});
+				if (!pick) return;
+				this._postMessage({ type: 'vscodeCommandPicked', commandId: pick });
+				break;
+			}
+			case 'deleteCombinedOp': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot || !message.opName) return;
+				const confirm = await vscode.window.showWarningMessage(
+					`Delete combined operation "${message.opName}"?`,
+					{ modal: true },
+					'Delete'
+				);
+				if (confirm !== 'Delete') return;
+				await deleteCombinedOp(wsRoot, message.opName as string, getConfigFile());
+				this._refresh();
+				break;
+			}
+			case 'setHooksCollapsed':
+				await this._context.workspaceState.update('commandsExtension.hooksCollapsed', !!message.value);
+				break;
+			case 'setHooksShowGlobal':
+				await this._context.workspaceState.update('commandsExtension.hooksShowGlobal', !!message.value);
+				break;
+			case 'saveClaudeHook': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot || !message.hook) return;
+				try {
+					await saveHook(wsRoot, message.hook as HookEntry, message.originalId as string | undefined, this._context);
+					this._refresh();
+				} catch (e) {
+					vscode.window.showWarningMessage(`Failed to save hook: ${e instanceof Error ? e.message : e}`);
+				}
+				break;
+			}
+			case 'deleteClaudeHook': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot || !message.id) return;
+				const confirm = await vscode.window.showWarningMessage(
+					'Delete this hook?',
+					{ modal: true },
+					'Delete'
+				);
+				if (confirm !== 'Delete') return;
+				await deleteHook(wsRoot, message.id as string, this._context);
+				this._refresh();
+				break;
+			}
+			case 'toggleClaudeHook': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot || !message.id) return;
+				await setHookEnabled(wsRoot, message.id as string, !!message.enabled, this._context);
+				this._refresh();
+				break;
+			}
+			case 'copyClaudeHook': {
+				if (!message.hook) return;
+				const h = message.hook as HookEntry;
+				const exported = {
+					event: h.event,
+					matcher: h.matcher,
+					command: h.command,
+					timeout: h.timeout,
+				};
+				await vscode.env.clipboard.writeText(JSON.stringify(exported, null, 2));
+				vscode.window.showInformationMessage('Hook copied to clipboard.');
+				break;
+			}
+			case 'pasteClaudeHook': {
+				try {
+					const text = await vscode.env.clipboard.readText();
+					const parsed = JSON.parse(text);
+					if (!parsed.event || !parsed.command) {
+						vscode.window.showWarningMessage('Clipboard JSON missing event/command fields.');
+						return;
+					}
+					this._postMessage({ type: 'openHookEditorFromPaste', hook: parsed });
+				} catch {
+					vscode.window.showWarningMessage('Clipboard is not valid JSON hook spec.');
+				}
+				break;
+			}
+			case 'openClaudeHookFile': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot || !message.target) return;
+				const paths = getHookFilePaths(wsRoot);
+				const filePath = paths[message.target as HookTargetFile];
+				try {
+					const doc = await vscode.workspace.openTextDocument(filePath);
+					await vscode.window.showTextDocument(doc);
+				} catch (e) {
+					vscode.window.showWarningMessage(`Cannot open ${filePath}: ${e instanceof Error ? e.message : e}`);
+				}
+				break;
+			}
+			case 'openHookScript': {
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				let p = String(message.path || '');
+				if (!p) return;
+				// Strip stray quotes first — shells let `"$VAR"/path` exist as one
+				// concatenated token, so the captured string can be mixed-quoted.
+				p = p.replace(/["']/g, '');
+				// Expand $CLAUDE_PROJECT_DIR / ${CLAUDE_PROJECT_DIR}
+				if (wsRoot) {
+					p = p.replace(/\$\{?CLAUDE_PROJECT_DIR\}?/g, wsRoot);
+				}
+				// Expand ~
+				if (p.startsWith('~/') || p === '~') {
+					const homedir = require('os').homedir();
+					p = require('path').join(homedir, p.slice(1));
+				}
+				try {
+					const doc = await vscode.workspace.openTextDocument(p);
+					await vscode.window.showTextDocument(doc);
+				} catch (e) {
+					vscode.window.showWarningMessage(`Cannot open ${p}: ${e instanceof Error ? e.message : e}`);
+				}
+				break;
+			}
 		}
 	}
 
@@ -374,6 +558,22 @@ export class WebviewMessageHandler {
 
 	public getUploadsCollapsed(): boolean | undefined {
 		return this._context.workspaceState.get<boolean>('commandsExtension.uploadsCollapsed');
+	}
+
+	public getCombinedCollapsed(): boolean | undefined {
+		return this._context.workspaceState.get<boolean>('commandsExtension.combinedCollapsed');
+	}
+
+	public getHooksCollapsed(): boolean | undefined {
+		return this._context.workspaceState.get<boolean>('commandsExtension.hooksCollapsed');
+	}
+
+	public getHooksShowGlobal(): boolean {
+		return this._context.workspaceState.get<boolean>('commandsExtension.hooksShowGlobal', false);
+	}
+
+	public getContext(): vscode.ExtensionContext {
+		return this._context;
 	}
 
 	private async _setFavorites(favorites: string[]): Promise<void> {
@@ -516,6 +716,75 @@ export async function sendCommandsToWebview(
 		marketplaceCollapsed,
 		uploadsCollapsed,
 	});
+
+	// Combined operations — feed both the ops themselves AND the picker context
+	// (server list + command list) so the editor modal can populate dropdowns
+	// without round-trips.
+	const combinedOps = await loadCombinedOps(workspaceRoot, configFile);
+	const lastCombinedStatuses = combinedOpRunner ? combinedOpRunner.getLastStatuses() : [];
+	const activeCombinedOps: string[] = combinedOpRunner
+		? combinedOps.filter((op) => combinedOpRunner!.isRunning(op.name)).map((op) => op.name)
+		: [];
+	const combinedCollapsed = handler.getCombinedCollapsed();
+
+	// Distinct server displays from uploads — used for the auto-upload step
+	// dropdown in the editor.
+	const serverDisplays = Array.from(new Set(
+		flatUploads.map((u) => {
+			const r = resolveServer(u, servers);
+			return r ? `${r.user}@${r.host}` : `${u.user ?? ''}@${u.host ?? ''}`;
+		}).filter((s) => s && s !== '@')
+	));
+
+	const commandNames = groups.flatMap((g) => g.commands.map((c) => ({ name: c.name, group: g.name })));
+	const uploadKeys = flatUploads.map((u) => ({
+		key: `${u.group || 'Uploads'}:${u.name}`,
+		name: u.name,
+		group: u.group || 'Uploads',
+	}));
+
+	postMessage({
+		type: 'updateCombined',
+		ops: combinedOps,
+		statuses: lastCombinedStatuses,
+		activeOps: activeCombinedOps,
+		combinedCollapsed,
+		pickContext: {
+			commands: commandNames,
+			uploads: uploadKeys,
+			servers: serverDisplays,
+			presetAvailability: getPresetAvailability(),
+		},
+	});
+
+	// Claude hooks
+	const hooks = await loadAllHooks(workspaceRoot, handler.getContext());
+	const hookFilePaths = getHookFilePaths(workspaceRoot);
+	// For the "Existing command" picker — name + actual script body so the hook
+	// stores the runnable string, not just the human-readable name.
+	const commandsForHooks = groups.flatMap((g) => g.commands.map((c) => ({
+		name: c.name,
+		command: c.command,
+		group: g.name,
+	})));
+	postMessage({
+		type: 'updateClaudeHooks',
+		hooks,
+		filePaths: hookFilePaths,
+		events: ALL_HOOK_EVENTS,
+		matcherEvents: Array.from(MATCHER_EVENTS),
+		commands: commandsForHooks,
+		presetTemplates: {
+			sound: soundCommand(),
+			notification: notificationCommand('{event} fired'),
+			open: openCommand('https://example.com', 'url'),
+			waitSeconds: 5,
+			appendTimestamp: 'echo "$(date \'+%F %T\') [{event}]" >> .claude/event.log',
+		},
+		presetAvailability: getPresetAvailability(),
+		hooksCollapsed: handler.getHooksCollapsed(),
+		hooksShowGlobal: handler.getHooksShowGlobal(),
+	});
 }
 
 export function sendActiveTerminals(postMessage: (msg: unknown) => void): void {
@@ -533,4 +802,11 @@ export function sendUploadStaleness(
 	info: StalenessInfo
 ): void {
 	postMessage({ type: 'uploadStaleness', uploadKey: key, ...info });
+}
+
+export function sendCombinedOpProgress(
+	postMessage: (msg: unknown) => void,
+	progress: CombinedOpProgress,
+): void {
+	postMessage({ type: 'combinedOpProgress', progress });
 }
