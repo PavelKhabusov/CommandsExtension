@@ -100,28 +100,75 @@ export class TerminalManager {
 	}
 
 	public runCommand(cmd: CommandDefinition): void {
+		const { terminal, commandText, created } = this._prepareTerminal(cmd);
+		terminal.show();
+		terminal.sendText(commandText);
+		if (created) this._notifyChange();
+	}
+
+	/**
+	 * Run a command and wait for it to complete via VS Code Shell Integration.
+	 * - If SI is available: resolves with `{ exitCode, tracked: true }` when the
+	 *   command exits.
+	 * - If SI is unavailable (custom shell, etc.): falls back to fire-and-go via
+	 *   `sendText` and resolves immediately with `{ tracked: false }`.
+	 *
+	 * Used by `CombinedOpRunner` to chain steps reliably. `signal` aborts the
+	 * wait (the terminal stays open — there's no clean cancel for an in-flight
+	 * shell command, so we just stop waiting and let it run).
+	 */
+	public async runCommandTracked(
+		cmd: CommandDefinition,
+		signal?: AbortSignal,
+		shellIntegrationTimeoutMs = 1500,
+	): Promise<{ exitCode: number | undefined; tracked: boolean }> {
+		const { terminal, commandText, created } = this._prepareTerminal(cmd);
+		terminal.show();
+		if (created) this._notifyChange();
+
+		const si = await waitForShellIntegration(terminal, shellIntegrationTimeoutMs, signal);
+		if (signal?.aborted) {
+			// Don't even send text — the run was cancelled before we could start.
+			return { exitCode: undefined, tracked: false };
+		}
+		if (!si) {
+			terminal.sendText(commandText);
+			return { exitCode: undefined, tracked: false };
+		}
+		const exec = si.executeCommand(commandText);
+		return new Promise((resolve) => {
+			const onAbort = () => {
+				sub.dispose();
+				if (signal) signal.removeEventListener('abort', onAbort);
+				resolve({ exitCode: undefined, tracked: false });
+			};
+			const sub = vscode.window.onDidEndTerminalShellExecution((e) => {
+				if (e.execution !== exec) return;
+				sub.dispose();
+				if (signal) signal.removeEventListener('abort', onAbort);
+				resolve({ exitCode: e.exitCode, tracked: true });
+			});
+			if (signal) signal.addEventListener('abort', onAbort, { once: true });
+		});
+	}
+
+	private _prepareTerminal(cmd: CommandDefinition): { terminal: vscode.Terminal; commandText: string; created: boolean } {
 		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 		const terminalName = `Cmd: ${cmd.name}`;
-
 		const commandText = cmd.type === 'node'
 			? `node ${cmd.command}`
 			: cmd.type === 'pwsh'
 				? `pwsh -Command ${cmd.command}`
 				: cmd.command;
 
-		// Check if we already have a terminal for this command that is still alive
 		let existing = this._terminals.get(terminalName);
 		if (existing && !this._isTerminalAlive(existing)) {
 			this._terminals.delete(terminalName);
 			existing = undefined;
 		}
 		// Fallback: a pre-existing terminal with the same name may not have been
-		// adopted yet (e.g. when runCommand fires from an SSE subscriber that
-		// runs before onDidOpenTerminal had a chance to add it, or right after
-		// a window reload where the constructor's `for (const t of terminals)`
-		// snapshot was empty). Look directly at the live VS Code terminals so
-		// `Cmd: deploy` re-uses an existing one instead of spawning a second
-		// terminal with the same name.
+		// adopted yet (e.g. SSE subscriber firing before onDidOpenTerminal). Look
+		// at live terminals to avoid spawning a duplicate `Cmd: deploy`.
 		if (!existing) {
 			for (const t of vscode.window.terminals) {
 				if (t.name === terminalName) {
@@ -132,23 +179,14 @@ export class TerminalManager {
 			}
 		}
 		if (existing) {
-			existing.show();
-			existing.sendText(commandText);
-			return;
+			return { terminal: existing, commandText, created: false };
 		}
-
-		const terminalOptions: vscode.TerminalOptions = {
+		const terminal = vscode.window.createTerminal({
 			name: terminalName,
-			cwd: cmd.cwd && workspaceRoot
-				? path.join(workspaceRoot, cmd.cwd)
-				: workspaceRoot,
-		};
-
-		const terminal = vscode.window.createTerminal(terminalOptions);
+			cwd: cmd.cwd && workspaceRoot ? path.join(workspaceRoot, cmd.cwd) : workspaceRoot,
+		});
 		this._terminals.set(terminalName, terminal);
-		terminal.show();
-		terminal.sendText(commandText);
-		this._notifyChange();
+		return { terminal, commandText, created: true };
 	}
 
 	private _isTerminalAlive(terminal: vscode.Terminal): boolean {
@@ -174,4 +212,18 @@ export class TerminalManager {
 	public getDisposables(): vscode.Disposable[] {
 		return this._disposables;
 	}
+}
+
+async function waitForShellIntegration(
+	terminal: vscode.Terminal,
+	timeoutMs: number,
+	signal?: AbortSignal,
+): Promise<vscode.TerminalShellIntegration | undefined> {
+	const startedAt = Date.now();
+	while (Date.now() - startedAt < timeoutMs) {
+		if (signal?.aborted) return undefined;
+		if (terminal.shellIntegration) return terminal.shellIntegration;
+		await new Promise((r) => setTimeout(r, 100));
+	}
+	return undefined;
 }

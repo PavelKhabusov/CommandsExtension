@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { CommandDefinition, CommandGroup, CommandSource } from './types';
+import { CombinedOpDefinition, CombinedStep } from './combinedOpsTypes';
 
 interface CommandsJsonSchema {
   commands: Array<{
@@ -11,6 +12,7 @@ interface CommandsJsonSchema {
     group?: string;
     cwd?: string;
   }>;
+  combined?: CombinedOpDefinition[];
 }
 
 interface PackageJsonSchema {
@@ -165,6 +167,88 @@ async function readCommandsJson(filePath: string): Promise<CommandsJsonSchema | 
   } catch {
     return null;
   }
+}
+
+// ─── Combined Operations ──────────────────────────────────────────────────
+
+const VALID_STEP_TYPES = new Set([
+  'command', 'upload', 'auto-upload', 'wait', 'open', 'sound', 'notification', 'vscode-cmd',
+]);
+
+function isValidStep(s: unknown): s is CombinedStep {
+  if (!s || typeof s !== 'object') return false;
+  const o = s as { type?: unknown };
+  if (typeof o.type !== 'string' || !VALID_STEP_TYPES.has(o.type)) return false;
+  return true;
+}
+
+function isValidCombinedOp(op: unknown): op is CombinedOpDefinition {
+  if (!op || typeof op !== 'object') return false;
+  const o = op as { name?: unknown; steps?: unknown };
+  if (typeof o.name !== 'string' || !o.name.trim()) return false;
+  if (!Array.isArray(o.steps)) return false;
+  return o.steps.every(isValidStep);
+}
+
+export async function loadCombinedOps(
+  workspaceRoot: string,
+  configFileName: string = 'commands-list.json',
+): Promise<CombinedOpDefinition[]> {
+  const filePath = path.join(workspaceRoot, configFileName);
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(filePath, 'utf-8');
+  } catch {
+    return [];
+  }
+  const parsed = safeParseJson<CommandsJsonSchema>(raw, filePath);
+  if (!parsed || !Array.isArray(parsed.combined)) return [];
+  return parsed.combined.filter(isValidCombinedOp).map((op) => ({
+    name: op.name,
+    steps: op.steps,
+    stopOnError: op.stopOnError !== false,
+  }));
+}
+
+export async function saveCombinedOp(
+  workspaceRoot: string,
+  op: CombinedOpDefinition,
+  originalName: string | undefined,
+  configFileName: string = 'commands-list.json',
+): Promise<void> {
+  const filePath = path.join(workspaceRoot, configFileName);
+  const data: CommandsJsonSchema =
+    (await readCommandsJson(filePath)) ?? { commands: [] };
+  if (!Array.isArray(data.combined)) data.combined = [];
+
+  const lookupName = originalName ?? op.name;
+  const idx = data.combined.findIndex((c) => c.name === lookupName);
+  const sanitized: CombinedOpDefinition = {
+    name: op.name,
+    steps: op.steps,
+    stopOnError: op.stopOnError !== false,
+  };
+  if (idx >= 0) {
+    data.combined[idx] = sanitized;
+  } else {
+    data.combined.push(sanitized);
+  }
+  await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+export async function deleteCombinedOp(
+  workspaceRoot: string,
+  name: string,
+  configFileName: string = 'commands-list.json',
+): Promise<boolean> {
+  const filePath = path.join(workspaceRoot, configFileName);
+  const data = await readCommandsJson(filePath);
+  if (!data || !Array.isArray(data.combined)) return false;
+  const before = data.combined.length;
+  data.combined = data.combined.filter((c) => c.name !== name);
+  if (data.combined.length === before) return false;
+  await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  return true;
 }
 
 export async function addCommandToFile(

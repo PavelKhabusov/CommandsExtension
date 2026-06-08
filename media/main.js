@@ -30,6 +30,40 @@
 	let lastUploadGroups = /** @type {any[]} */ ([]);
 	let marketplaceCollapsed = /** @type {boolean | undefined} */ (undefined);
 	let uploadsCollapsed = /** @type {boolean | undefined} */ (undefined);
+	// Combined Operations state
+	let lastCombinedOps = /** @type {any[]} */ ([]);
+	/** @type {Map<string, any>} */
+	const combinedStatusMap = new Map();
+	/** @type {Set<string>} */
+	const combinedActiveOps = new Set();
+	let combinedCollapsed = /** @type {boolean | undefined} */ (undefined);
+	let combinedPickContext = /** @type {{ commands: Array<{name:string;group:string}>; uploads: Array<{key:string;name:string;group:string}>; servers: string[]; presetAvailability: { sound: boolean; notification: boolean; open: boolean; installHint: string } }} */ ({ commands: [], uploads: [], servers: [], presetAvailability: { sound: true, notification: true, open: true, installHint: '' } });
+	// Claude Hooks state
+	let lastClaudeHooks = /** @type {any[]} */ ([]);
+	let hooksCollapsed = /** @type {boolean | undefined} */ (undefined);
+	let hooksShowGlobal = false;
+	let hooksContext = /** @type {{ filePaths: { project: string; local: string; user: string }; events: string[]; matcherEvents: string[]; commands: Array<{ name: string; command: string; group: string }>; presetTemplates: any; presetAvailability: { sound: boolean; notification: boolean; open: boolean; installHint: string } }} */ ({
+		filePaths: { project: '', local: '', user: '' },
+		events: [],
+		matcherEvents: [],
+		commands: [],
+		presetTemplates: {},
+		presetAvailability: { sound: true, notification: true, open: true, installHint: '' },
+	});
+
+	// Short blurb shown under each event header to remind the user when the
+	// hook actually fires. Pulled from Claude Code's hook docs.
+	const HOOK_EVENT_DESCRIPTIONS = {
+		Stop: 'Fires when Claude finishes responding to your prompt.',
+		SubagentStop: 'Fires when a subagent finishes its task.',
+		UserPromptSubmit: 'Fires every time you submit a new prompt.',
+		PreToolUse: 'Fires before Claude runs a tool (use `matcher` to scope by tool name).',
+		PostToolUse: 'Fires after a tool finishes (matcher scopes by tool name).',
+		Notification: 'Fires when Claude needs your attention (permission request, idle warning).',
+		SessionStart: 'Fires once at the start of a new session.',
+		SessionEnd: 'Fires when the session ends.',
+		PreCompact: 'Fires before context compaction.',
+	};
 
 	function saveCollapsedGroups() {
 		vscode.postMessage({ type: 'saveCollapsedGroups', collapsedGroups: Array.from(collapsedGroups) });
@@ -326,6 +360,76 @@
 					uploadActiveKeys.delete(p.uploadKey);
 				}
 				updateUploadCardStatus(p.uploadKey);
+				// Combined op cards that are running an upload step echo this
+				// upload's progress — refresh those cards too.
+				for (const op of lastCombinedOps) {
+					const st = combinedStatusMap.get(op.name);
+					if (st && st.currentUploadKey === p.uploadKey) {
+						updateCombinedCardStatus(op.name);
+					}
+				}
+				break;
+			}
+			case 'updateCombined':
+				lastCombinedOps = message.ops || [];
+				if (Array.isArray(message.statuses)) {
+					combinedStatusMap.clear();
+					for (const s of message.statuses) {
+						if (s && s.opName) combinedStatusMap.set(s.opName, s);
+					}
+				}
+				if (Array.isArray(message.activeOps)) {
+					combinedActiveOps.clear();
+					for (const n of message.activeOps) combinedActiveOps.add(n);
+				}
+				if (message.combinedCollapsed !== undefined) {
+					combinedCollapsed = message.combinedCollapsed;
+				}
+				if (message.pickContext) combinedPickContext = message.pickContext;
+				renderCombined();
+				break;
+			case 'combinedOpProgress': {
+				const p = message.progress;
+				if (!p || !p.opName) break;
+				combinedStatusMap.set(p.opName, p);
+				if (p.status === 'running') {
+					combinedActiveOps.add(p.opName);
+				} else {
+					combinedActiveOps.delete(p.opName);
+				}
+				updateCombinedCardStatus(p.opName);
+				break;
+			}
+			case 'updateClaudeHooks':
+				lastClaudeHooks = message.hooks || [];
+				hooksContext = {
+					filePaths: message.filePaths || hooksContext.filePaths,
+					events: message.events || hooksContext.events,
+					matcherEvents: message.matcherEvents || hooksContext.matcherEvents,
+					commands: message.commands || hooksContext.commands,
+					presetTemplates: message.presetTemplates || hooksContext.presetTemplates,
+					presetAvailability: message.presetAvailability || hooksContext.presetAvailability,
+				};
+				if (message.hooksCollapsed !== undefined) hooksCollapsed = message.hooksCollapsed;
+				if (message.hooksShowGlobal !== undefined) hooksShowGlobal = !!message.hooksShowGlobal;
+				renderHooks();
+				break;
+			case 'openHookEditorFromPaste':
+				if (message.hook) openHookEditor(null, message.hook);
+				break;
+			case 'vscodeCommandPicked':
+				if (pendingVscodeCmdCallback) {
+					const cb = pendingVscodeCmdCallback;
+					pendingVscodeCmdCallback = null;
+					cb(message.commandId || null);
+				}
+				break;
+			case 'rpcResult': {
+				const cb2 = pendingRpc.get(message._reqId);
+				if (cb2) {
+					pendingRpc.delete(message._reqId);
+					cb2(message.result);
+				}
 				break;
 			}
 		}
@@ -341,7 +445,15 @@
 		}
 	}
 
-	document.addEventListener('click', closeContextMenu);
+	// Auto-close on outside-click. Skip when the click happened INSIDE any
+	// context menu — the item handler may have opened a sub-menu, and we'd
+	// nuke it here on the bubbling click. `.closest()` still works on a
+	// just-removed menu because the detached subtree keeps its parent links.
+	document.addEventListener('click', (e) => {
+		const t = e.target;
+		if (t instanceof Element && t.closest('.context-menu')) return;
+		closeContextMenu();
+	});
 	document.addEventListener('contextmenu', closeContextMenu);
 	document.addEventListener('keydown', (e) => {
 		if (e.key === 'Escape') closeContextMenu();
@@ -1376,9 +1488,14 @@
 
 		const sub = document.createElement('span');
 		sub.className = 'upload-subtitle';
-		const where = (upload.user && upload.host)
+		const account = (upload.user && upload.host)
 			? upload.user + '@' + upload.host
 			: (upload.server ? '→ server "' + upload.server + '" (not found)' : 'no server config');
+		// Prefix the server name before the account so it's clear which server
+		// this upload targets (only when the upload references a named server).
+		const where = (upload.server && upload.user && upload.host)
+			? upload.server + ' · ' + account
+			: account;
 		sub.textContent = where + ' · ' + upload.remoteDir;
 		if (upload._unresolved) {
 			sub.classList.add('upload-unresolved');
@@ -1622,6 +1739,1366 @@
 	function truncate(s, n) {
 		if (!s || s.length <= n) return s;
 		return '…' + s.substring(s.length - n + 1);
+	}
+
+	// ─── Combined Operations ─────────────────────────────────────────────
+
+	function stepIcon(step) {
+		switch (step.type) {
+			case 'command': return '▶';
+			case 'upload': return '⬆';
+			case 'auto-upload': return '⚡';
+			case 'wait': return '⏱';
+			case 'open': return '↗';
+			case 'sound': return '🔊';
+			case 'notification': return '🔔';
+			case 'vscode-cmd': return '⚙';
+			default: return '?';
+		}
+	}
+
+	function stepLabel(step) {
+		switch (step.type) {
+			case 'command': return step.name;
+			case 'upload': {
+				const parts = String(step.uploadKey || '').split(':');
+				return parts.length > 1 ? parts.slice(1).join(':') : step.uploadKey;
+			}
+			case 'auto-upload': return 'Auto → ' + step.server;
+			case 'wait': return 'Wait ' + step.seconds + 's';
+			case 'open': return 'Open ' + (step.kind || 'url') + ': ' + step.target;
+			case 'sound': return 'Sound: ' + (step.clip || 'complete');
+			case 'notification': return 'Notify: ' + step.message;
+			case 'vscode-cmd': return 'VS Code: ' + (step.title || step.commandId);
+			default: return JSON.stringify(step);
+		}
+	}
+
+	/**
+	 * Pending callback for the native quickPick — the picker lives in the
+	 * extension host and replies via a 'vscodeCommandPicked' message, so we
+	 * stash the resolution function here and call it when the message lands.
+	 */
+	let pendingVscodeCmdCallback = null;
+
+	// Generic request/response RPC to the extension host. Used to drive
+	// native inputBox / quickPick popups (window.prompt doesn't work inside
+	// VS Code webviews).
+	const pendingRpc = new Map();
+	let nextRpcId = 0;
+	function rpc(type, params) {
+		const id = ++nextRpcId;
+		return new Promise(function(resolve) {
+			pendingRpc.set(id, resolve);
+			vscode.postMessage(Object.assign({ type: type, _reqId: id }, params || {}));
+		});
+	}
+	function rpcInput(title, defaultValue, placeholder) {
+		return rpc('rpcInputBox', { title: title, defaultValue: defaultValue, placeholder: placeholder });
+	}
+	function rpcPick(title, items, placeholder) {
+		return rpc('rpcQuickPick', { title: title, items: items, placeholder: placeholder });
+	}
+
+	function renderCombined() {
+		const wrapper = document.getElementById('combined-wrapper');
+		if (!wrapper) return;
+		wrapper.innerHTML = '';
+
+		const wrap = document.createElement('div');
+		wrap.className = 'combined-section';
+
+		const header = document.createElement('div');
+		header.className = 'combined-header';
+
+		const chevron = document.createElement('span');
+		chevron.className = 'combined-chevron';
+		chevron.innerHTML = '&#x25BC;';
+		header.appendChild(chevron);
+
+		const title = document.createElement('span');
+		title.className = 'combined-title';
+		title.textContent = 'Combined Operations';
+		header.appendChild(title);
+
+		const addBtn = document.createElement('button');
+		addBtn.className = 'combined-add-btn';
+		addBtn.title = 'Add combined operation';
+		addBtn.textContent = '+';
+		addBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			openCombinedEditor(null);
+		});
+		header.appendChild(addBtn);
+
+		if (lastCombinedOps.length > 0) {
+			const badge = document.createElement('span');
+			badge.className = 'combined-count';
+			badge.textContent = String(lastCombinedOps.length);
+			header.appendChild(badge);
+		}
+
+		const body = document.createElement('div');
+		body.className = 'combined-body';
+
+		header.addEventListener('click', () => {
+			body.classList.toggle('collapsed');
+			chevron.classList.toggle('collapsed');
+			wrap.classList.toggle('collapsed');
+			vscode.postMessage({ type: 'setCombinedCollapsed', value: wrap.classList.contains('collapsed') });
+		});
+
+		if (lastCombinedOps.length === 0) {
+			const empty = document.createElement('div');
+			empty.className = 'combined-empty';
+			empty.innerHTML = 'No combined operations. Click <span class="combined-empty-icon">+</span> to create one.';
+			body.appendChild(empty);
+		} else {
+			for (const op of lastCombinedOps) {
+				body.appendChild(createCombinedOpCard(op));
+			}
+		}
+
+		wrap.appendChild(header);
+		wrap.appendChild(body);
+		wrapper.appendChild(wrap);
+
+		// Apply collapsed state — default expanded when there are ops.
+		const shouldCollapse = combinedCollapsed === undefined ? lastCombinedOps.length === 0 : combinedCollapsed;
+		if (shouldCollapse) {
+			body.classList.add('collapsed');
+			chevron.classList.add('collapsed');
+			wrap.classList.add('collapsed');
+		}
+	}
+
+	function createCombinedOpCard(op) {
+		const card = document.createElement('div');
+		card.className = 'combined-item';
+		card.dataset.opName = op.name;
+
+		const icon = document.createElement('span');
+		icon.className = 'combined-icon';
+		icon.innerHTML = '&#x25B6;';
+		card.appendChild(icon);
+
+		const info = document.createElement('div');
+		info.className = 'combined-info';
+
+		const top = document.createElement('div');
+		top.className = 'combined-top';
+		const nameSpan = document.createElement('span');
+		nameSpan.className = 'combined-name';
+		nameSpan.textContent = op.name;
+		top.appendChild(nameSpan);
+
+		const stepBadge = document.createElement('span');
+		stepBadge.className = 'combined-step-count';
+		stepBadge.textContent = op.steps.length + ' step' + (op.steps.length === 1 ? '' : 's');
+		top.appendChild(stepBadge);
+
+		info.appendChild(top);
+
+		// Per-step list with checkboxes. Lets the user quickly skip individual
+		// steps without opening the editor. Click on the checkbox alone — the
+		// rest of the row stays a no-op so the parent card click (Run) wins.
+		const stepsList = document.createElement('div');
+		stepsList.className = 'combined-steps-list';
+		op.steps.forEach(function(step, idx) {
+			const row = document.createElement('div');
+			row.className = 'combined-step-mini';
+			if (step.enabled === false) row.classList.add('combined-step-mini-off');
+			const cb = document.createElement('input');
+			cb.type = 'checkbox';
+			cb.className = 'combined-step-mini-cb';
+			cb.checked = step.enabled !== false;
+			cb.title = cb.checked ? 'Click to skip this step' : 'Click to include this step';
+			cb.addEventListener('click', function(e) {
+				e.stopPropagation();
+				// Optimistic update — the file rewrite + watcher refresh land
+				// shortly after but the user sees instant feedback.
+				step.enabled = cb.checked;
+				row.classList.toggle('combined-step-mini-off', !cb.checked);
+				vscode.postMessage({
+					type: 'saveCombinedOp',
+					op: { name: op.name, steps: op.steps, stopOnError: op.stopOnError !== false },
+					originalName: op.name,
+				});
+			});
+			row.appendChild(cb);
+			const ic = document.createElement('span');
+			ic.className = 'combined-step-mini-icon';
+			ic.textContent = stepIcon(step);
+			row.appendChild(ic);
+			const lbl = document.createElement('span');
+			lbl.className = 'combined-step-mini-label';
+			lbl.textContent = stepLabel(step);
+			lbl.title = stepLabel(step);
+			row.appendChild(lbl);
+			stepsList.appendChild(row);
+		});
+		info.appendChild(stepsList);
+
+		const statusEl = document.createElement('div');
+		statusEl.className = 'combined-status';
+		info.appendChild(statusEl);
+
+		card.appendChild(info);
+
+		card.addEventListener('click', () => {
+			if (combinedActiveOps.has(op.name)) {
+				vscode.postMessage({ type: 'cancelCombinedOp', opName: op.name });
+			} else {
+				vscode.postMessage({ type: 'runCombinedOp', opName: op.name });
+			}
+		});
+
+		card.addEventListener('contextmenu', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			closeContextMenu();
+			const menu = document.createElement('div');
+			menu.className = 'context-menu';
+
+			const runItem = document.createElement('div');
+			runItem.className = 'context-menu-item';
+			runItem.textContent = combinedActiveOps.has(op.name) ? 'Cancel' : 'Run';
+			runItem.addEventListener('click', () => {
+				closeContextMenu();
+				if (combinedActiveOps.has(op.name)) {
+					vscode.postMessage({ type: 'cancelCombinedOp', opName: op.name });
+				} else {
+					vscode.postMessage({ type: 'runCombinedOp', opName: op.name });
+				}
+			});
+			menu.appendChild(runItem);
+
+			const editItem = document.createElement('div');
+			editItem.className = 'context-menu-item';
+			editItem.textContent = 'Edit…';
+			editItem.addEventListener('click', () => {
+				closeContextMenu();
+				openCombinedEditor(op);
+			});
+			menu.appendChild(editItem);
+
+			const sep = document.createElement('div');
+			sep.className = 'context-menu-separator';
+			menu.appendChild(sep);
+
+			const delItem = document.createElement('div');
+			delItem.className = 'context-menu-item context-menu-item-danger';
+			delItem.textContent = 'Delete';
+			delItem.addEventListener('click', () => {
+				closeContextMenu();
+				vscode.postMessage({ type: 'deleteCombinedOp', opName: op.name });
+			});
+			menu.appendChild(delItem);
+
+			document.body.appendChild(menu);
+			activeContextMenu = menu;
+			const r = menu.getBoundingClientRect();
+			let top = e.clientY;
+			let left = e.clientX;
+			if (top + r.height > window.innerHeight) top = window.innerHeight - r.height - 4;
+			if (left + r.width > window.innerWidth) left = window.innerWidth - r.width - 4;
+			menu.style.top = top + 'px';
+			menu.style.left = left + 'px';
+		});
+
+		applyCombinedStatusToCard(card, op);
+		return card;
+	}
+
+	function updateCombinedCardStatus(opName) {
+		const wrapper = document.getElementById('combined-wrapper');
+		if (!wrapper) return;
+		const card = wrapper.querySelector('.combined-item[data-op-name="' + cssEscape(opName) + '"]');
+		if (!(card instanceof HTMLElement)) return;
+		const op = lastCombinedOps.find((o) => o.name === opName);
+		if (!op) return;
+		applyCombinedStatusToCard(card, op);
+	}
+
+	function applyCombinedStatusToCard(card, op) {
+		card.classList.remove('combined-running', 'combined-done', 'combined-error', 'combined-cancelled');
+		const statusEl = card.querySelector('.combined-status');
+		if (!(statusEl instanceof HTMLElement)) return;
+		statusEl.innerHTML = '';
+
+		const st = combinedStatusMap.get(op.name);
+		const isActive = combinedActiveOps.has(op.name);
+
+		if (isActive && st) {
+			card.classList.add('combined-running');
+			const line = document.createElement('div');
+			line.className = 'combined-progress-line';
+			line.textContent = 'Running ' + st.step + '/' + st.total + ': ' + (st.currentLabel || '');
+			statusEl.appendChild(line);
+
+			if (st.message) {
+				const sub = document.createElement('div');
+				sub.className = 'combined-progress-sub';
+				sub.textContent = st.message;
+				statusEl.appendChild(sub);
+			}
+
+			// If the current step is an upload, embed its progress bar inline.
+			if (st.currentUploadKey) {
+				const upStatus = uploadStatusMap.get(st.currentUploadKey);
+				if (upStatus) {
+					const bar = document.createElement('div');
+					bar.className = 'upload-progress';
+					const fill = document.createElement('div');
+					fill.className = 'upload-progress-fill';
+					const pct = typeof upStatus.percent === 'number' ? upStatus.percent : 0;
+					fill.style.width = pct.toFixed(1) + '%';
+					bar.appendChild(fill);
+					statusEl.appendChild(bar);
+
+					const text = document.createElement('div');
+					text.className = 'upload-progress-text';
+					const parts = [];
+					if (typeof upStatus.percent === 'number') parts.push(upStatus.percent.toFixed(0) + '%');
+					if (upStatus.currentFile) parts.push(truncate(upStatus.currentFile, 40));
+					if (typeof upStatus.speedBps === 'number' && upStatus.speedBps > 0) {
+						parts.push(formatBytesShort(upStatus.speedBps) + '/s');
+					}
+					if (upStatus.filesTotal) parts.push(upStatus.filesDone + '/' + upStatus.filesTotal);
+					text.textContent = parts.join(' · ');
+					statusEl.appendChild(text);
+				}
+			}
+		} else if (st && st.status === 'done') {
+			card.classList.add('combined-done');
+			const text = document.createElement('div');
+			text.className = 'combined-last';
+			text.textContent = '✓ done (' + st.total + '/' + st.total + ')';
+			statusEl.appendChild(text);
+		} else if (st && st.status === 'error') {
+			card.classList.add('combined-error');
+			const text = document.createElement('div');
+			text.className = 'combined-last combined-last-error';
+			text.textContent = '✗ failed at step ' + st.step + ': ' + (st.message || '');
+			text.title = st.message || '';
+			statusEl.appendChild(text);
+		} else if (st && st.status === 'cancelled') {
+			card.classList.add('combined-cancelled');
+			const text = document.createElement('div');
+			text.className = 'combined-last';
+			text.textContent = 'cancelled at step ' + st.step;
+			statusEl.appendChild(text);
+		}
+	}
+
+	// ── Editor modal ────────────────────────────────────────────────────
+
+	function openCombinedEditor(existingOp) {
+		// Close any open menu.
+		closeContextMenu();
+		// Remove any prior editor (inline form lives inside the wrapper).
+		const prior = document.querySelector('.combined-modal-backdrop');
+		if (prior) prior.remove();
+		// Expand the combined section if collapsed so the editor is visible.
+		const cWrapper = document.getElementById('combined-wrapper');
+		const cBody = cWrapper ? cWrapper.querySelector('.combined-body') : null;
+		const cChevron = cWrapper ? cWrapper.querySelector('.combined-chevron') : null;
+		const cWrap = cWrapper ? cWrapper.querySelector('.combined-section') : null;
+		if (cBody && cBody.classList.contains('collapsed')) {
+			cBody.classList.remove('collapsed');
+			if (cChevron) cChevron.classList.remove('collapsed');
+			if (cWrap) cWrap.classList.remove('collapsed');
+		}
+
+		const isEdit = !!existingOp;
+		const originalName = existingOp ? existingOp.name : undefined;
+		/** @type {{ name: string; steps: any[]; stopOnError: boolean }} */
+		const draft = existingOp
+			? { name: existingOp.name, steps: JSON.parse(JSON.stringify(existingOp.steps || [])), stopOnError: existingOp.stopOnError !== false }
+			: { name: '', steps: [], stopOnError: true };
+
+		const backdrop = document.createElement('div');
+		backdrop.className = 'combined-modal-backdrop';
+		backdrop.addEventListener('click', (e) => {
+			if (e.target === backdrop) closeModal();
+		});
+
+		const modal = document.createElement('div');
+		modal.className = 'combined-modal';
+		modal.addEventListener('click', (e) => e.stopPropagation());
+
+		// Header
+		const headerRow = document.createElement('div');
+		headerRow.className = 'combined-modal-header';
+		const titleEl = document.createElement('span');
+		titleEl.className = 'combined-modal-title';
+		titleEl.textContent = isEdit ? 'Edit Combined Operation' : 'New Combined Operation';
+		headerRow.appendChild(titleEl);
+		const closeBtn = document.createElement('button');
+		closeBtn.className = 'combined-modal-close';
+		closeBtn.textContent = '✕';
+		closeBtn.addEventListener('click', closeModal);
+		headerRow.appendChild(closeBtn);
+		modal.appendChild(headerRow);
+
+		// Name input
+		const nameGroup = document.createElement('div');
+		nameGroup.className = 'combined-modal-field';
+		const nameLabel = document.createElement('label');
+		nameLabel.textContent = 'Name';
+		const nameInput = document.createElement('input');
+		nameInput.type = 'text';
+		nameInput.value = draft.name;
+		nameInput.placeholder = 'Build & Deploy';
+		nameInput.addEventListener('input', () => { draft.name = nameInput.value; });
+		nameGroup.appendChild(nameLabel);
+		nameGroup.appendChild(nameInput);
+		modal.appendChild(nameGroup);
+
+		// Steps list with drag-and-drop reorder
+		const stepsLabel = document.createElement('label');
+		stepsLabel.className = 'combined-modal-field-label';
+		stepsLabel.textContent = 'Steps (drag to reorder):';
+		modal.appendChild(stepsLabel);
+
+		const stepsList = document.createElement('div');
+		stepsList.className = 'combined-modal-steps';
+		modal.appendChild(stepsList);
+
+		function renderSteps() {
+			stepsList.innerHTML = '';
+			draft.steps.forEach((step, idx) => {
+				const row = document.createElement('div');
+				row.className = 'combined-step-row';
+				if (step.enabled === false) row.classList.add('combined-step-row-off');
+				row.draggable = true;
+				row.dataset.stepIndex = String(idx);
+
+				const drag = document.createElement('span');
+				drag.className = 'combined-step-drag';
+				drag.textContent = '⋮⋮';
+				row.appendChild(drag);
+
+				const enabledCb = document.createElement('input');
+				enabledCb.type = 'checkbox';
+				enabledCb.checked = step.enabled !== false;
+				enabledCb.title = enabledCb.checked ? 'Step is included' : 'Step is skipped';
+				enabledCb.addEventListener('click', function(e) {
+					e.stopPropagation();
+					step.enabled = enabledCb.checked;
+					row.classList.toggle('combined-step-row-off', !enabledCb.checked);
+				});
+				row.appendChild(enabledCb);
+
+				const stepIconEl = document.createElement('span');
+				stepIconEl.className = 'combined-step-icon';
+				stepIconEl.textContent = stepIcon(step);
+				row.appendChild(stepIconEl);
+
+				const label = document.createElement('span');
+				label.className = 'combined-step-label';
+				label.textContent = stepLabel(step);
+				row.appendChild(label);
+
+				const del = document.createElement('button');
+				del.className = 'combined-step-del';
+				del.textContent = '✕';
+				del.title = 'Remove step';
+				del.addEventListener('click', (e) => {
+					e.stopPropagation();
+					draft.steps.splice(idx, 1);
+					renderSteps();
+				});
+				row.appendChild(del);
+
+				row.addEventListener('dragstart', (e) => {
+					e.dataTransfer?.setData('text/plain', String(idx));
+					row.classList.add('dragging');
+				});
+				row.addEventListener('dragend', () => row.classList.remove('dragging'));
+				row.addEventListener('dragover', (e) => {
+					e.preventDefault();
+					row.classList.add('drag-over');
+				});
+				row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+				row.addEventListener('drop', (e) => {
+					e.preventDefault();
+					row.classList.remove('drag-over');
+					const fromIdx = parseInt(e.dataTransfer?.getData('text/plain') || '-1', 10);
+					if (isNaN(fromIdx) || fromIdx === idx) return;
+					const [moved] = draft.steps.splice(fromIdx, 1);
+					draft.steps.splice(idx, 0, moved);
+					renderSteps();
+				});
+
+				stepsList.appendChild(row);
+			});
+			if (draft.steps.length === 0) {
+				const empty = document.createElement('div');
+				empty.className = 'combined-step-empty';
+				empty.textContent = 'No steps yet. Click "Add step ▾" below.';
+				stepsList.appendChild(empty);
+			}
+		}
+		renderSteps();
+
+		// Add-step dropdown
+		const addRow = document.createElement('div');
+		addRow.className = 'combined-modal-add-row';
+		const addStepBtn = document.createElement('button');
+		addStepBtn.className = 'btn-primary';
+		addStepBtn.textContent = '+ Add step ▾';
+		addRow.appendChild(addStepBtn);
+		modal.appendChild(addRow);
+
+		addStepBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			showAddStepMenu(addStepBtn, (newStep) => {
+				if (newStep) {
+					draft.steps.push(newStep);
+					renderSteps();
+				}
+			});
+		});
+
+		// Stop-on-error checkbox — single label wraps the checkbox + text so they
+		// line up on one row (the standard .combined-modal-field is a vertical
+		// flex which made the label drop below the box).
+		const optsRow = document.createElement('label');
+		optsRow.className = 'combined-modal-checkbox';
+		const stopCb = document.createElement('input');
+		stopCb.type = 'checkbox';
+		stopCb.checked = draft.stopOnError;
+		stopCb.addEventListener('change', () => { draft.stopOnError = stopCb.checked; });
+		optsRow.appendChild(stopCb);
+		optsRow.appendChild(document.createTextNode('Stop on error'));
+		modal.appendChild(optsRow);
+
+		// Footer
+		const footer = document.createElement('div');
+		footer.className = 'combined-modal-footer';
+		const cancelBtn = document.createElement('button');
+		cancelBtn.className = 'btn-secondary';
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.addEventListener('click', closeModal);
+		const saveBtn = document.createElement('button');
+		saveBtn.className = 'btn-primary';
+		saveBtn.textContent = 'Save';
+		saveBtn.addEventListener('click', () => {
+			if (!draft.name.trim()) {
+				nameInput.focus();
+				return;
+			}
+			if (draft.steps.length === 0) {
+				return;
+			}
+			vscode.postMessage({
+				type: 'saveCombinedOp',
+				op: { name: draft.name.trim(), steps: draft.steps, stopOnError: draft.stopOnError },
+				originalName: originalName,
+			});
+			closeModal();
+		});
+		footer.appendChild(cancelBtn);
+		footer.appendChild(saveBtn);
+		modal.appendChild(footer);
+
+		backdrop.appendChild(modal);
+		// Inline inside the section's body so the editor is sidebar-friendly,
+		// rather than a full-page modal overlay.
+		const targetBody = document.querySelector('#combined-wrapper .combined-body');
+		(targetBody || document.body).insertBefore(backdrop, targetBody ? targetBody.firstChild : null);
+		nameInput.focus();
+		backdrop.scrollIntoView({ block: 'nearest' });
+
+		function closeModal() {
+			backdrop.remove();
+		}
+	}
+
+	function showAddStepMenu(anchor, onPick) {
+		closeContextMenu();
+		const menu = document.createElement('div');
+		menu.className = 'context-menu combined-add-menu';
+
+		const presetAvail = combinedPickContext.presetAvailability || { sound: true, notification: true, open: true, installHint: '' };
+
+		const types = [
+			{ label: '▶ Command', kind: 'command-pick' },
+			{ label: '⬆ Upload', kind: 'upload-pick' },
+			{ label: '⚡ Auto-upload server', kind: 'auto-upload-pick' },
+			{ label: '⚙ VS Code command…', kind: 'vscode-cmd-pick' },
+			{ label: '⏱ Wait…', kind: 'wait-prompt' },
+			{ label: (presetAvail.open ? '' : '⚠ ') + '↗ Open…', kind: 'open-prompt' },
+			{ label: (presetAvail.sound ? '' : '⚠ ') + '🔊 Play sound…', kind: 'sound-prompt' },
+			{ label: (presetAvail.notification ? '' : '⚠ ') + '🔔 Notification…', kind: 'notification-prompt' },
+		];
+
+		for (const t of types) {
+			const item = document.createElement('div');
+			item.className = 'context-menu-item';
+			item.textContent = t.label;
+			if (t.kind === 'sound-prompt' && !presetAvail.sound) item.title = presetAvail.installHint || 'Sound utility not detected on this system';
+			if (t.kind === 'notification-prompt' && !presetAvail.notification) item.title = presetAvail.installHint || 'Notification utility not detected on this system';
+			if (t.kind === 'open-prompt' && !presetAvail.open) item.title = presetAvail.installHint || 'Open utility (xdg-open) not detected on this system';
+			item.addEventListener('click', () => {
+				closeContextMenu();
+				handleAddStepPick(t.kind, anchor, onPick);
+			});
+			menu.appendChild(item);
+		}
+
+		document.body.appendChild(menu);
+		activeContextMenu = menu;
+		const r = anchor.getBoundingClientRect();
+		const mr = menu.getBoundingClientRect();
+		let top = r.bottom + 4;
+		let left = r.left;
+		if (top + mr.height > window.innerHeight) top = r.top - mr.height - 4;
+		if (left + mr.width > window.innerWidth) left = window.innerWidth - mr.width - 4;
+		menu.style.top = top + 'px';
+		menu.style.left = left + 'px';
+	}
+
+	function handleAddStepPick(kind, anchor, onPick) {
+		if (kind === 'command-pick') {
+			showSubPicker(anchor, combinedPickContext.commands.map((c) => ({
+				label: c.name,
+				detail: c.group,
+				onPick: () => onPick({ type: 'command', name: c.name }),
+			})), 'No commands available');
+		} else if (kind === 'upload-pick') {
+			showSubPicker(anchor, combinedPickContext.uploads.map((u) => ({
+				label: u.name,
+				detail: u.group,
+				onPick: () => onPick({ type: 'upload', uploadKey: u.key }),
+			})), 'No uploads configured');
+		} else if (kind === 'auto-upload-pick') {
+			showSubPicker(anchor, combinedPickContext.servers.map((s) => ({
+				label: s,
+				detail: 'auto-upload set-cover',
+				onPick: () => onPick({ type: 'auto-upload', server: s }),
+			})), 'No upload servers configured');
+		} else if (kind === 'vscode-cmd-pick') {
+			// Defer to the native quickPick in the extension host — too many
+			// commands (1000+) to ship to the webview, and VS Code's fuzzy
+			// search is what users already know.
+			pendingVscodeCmdCallback = (commandId) => {
+				if (!commandId) return;
+				onPick({ type: 'vscode-cmd', commandId: commandId, title: commandId });
+			};
+			vscode.postMessage({ type: 'pickVscodeCommand' });
+		} else if (kind === 'wait-prompt') {
+			// window.prompt() doesn't work in VS Code webviews — defer to the
+			// native input box via RPC.
+			rpcInput('Wait how many seconds?', '5', 'e.g. 5').then(function(val) {
+				const n = parseFloat(val || '');
+				if (n > 0) onPick({ type: 'wait', seconds: n });
+			});
+		} else if (kind === 'open-prompt') {
+			rpcPick('Open — target kind', ['url', 'file', 'app']).then(function(k) {
+				if (!k) return;
+				const defaultV = k === 'url' ? 'https://example.com' : k === 'app' ? 'firefox' : '${workspaceFolder}/README.md';
+				return rpcInput('Open — target', defaultV, k === 'url' ? 'https://…' : k === 'app' ? 'app name' : 'file path').then(function(target) {
+					if (!target) return;
+					onPick({ type: 'open', target: target, kind: k });
+				});
+			});
+		} else if (kind === 'sound-prompt') {
+			rpcPick('Sound clip', ['complete', 'alert', 'error']).then(function(c) {
+				if (!c) return;
+				onPick({ type: 'sound', clip: c });
+			});
+		} else if (kind === 'notification-prompt') {
+			rpcInput('Notification message', 'Done', 'supports {opName}, {step}, {total}').then(function(msg) {
+				if (!msg) return;
+				return rpcPick('Level', ['info', 'warn', 'error']).then(function(l) {
+					onPick({ type: 'notification', message: msg, level: l || 'info' });
+				});
+			});
+		}
+	}
+
+	function showSubPicker(anchor, items, emptyText) {
+		closeContextMenu();
+		const menu = document.createElement('div');
+		menu.className = 'context-menu combined-add-menu';
+
+		if (items.length === 0) {
+			const empty = document.createElement('div');
+			empty.className = 'context-menu-item context-menu-item-disabled';
+			empty.textContent = emptyText;
+			menu.appendChild(empty);
+		} else {
+			for (const it of items) {
+				const row = document.createElement('div');
+				row.className = 'context-menu-item';
+				const label = document.createElement('span');
+				label.textContent = it.label;
+				row.appendChild(label);
+				if (it.detail) {
+					const det = document.createElement('span');
+					det.className = 'context-menu-item-detail';
+					det.textContent = it.detail;
+					row.appendChild(det);
+				}
+				row.addEventListener('click', () => {
+					closeContextMenu();
+					it.onPick();
+				});
+				menu.appendChild(row);
+			}
+		}
+
+		document.body.appendChild(menu);
+		activeContextMenu = menu;
+		const r = anchor.getBoundingClientRect();
+		const mr = menu.getBoundingClientRect();
+		let top = r.bottom + 4;
+		let left = r.left;
+		if (top + mr.height > window.innerHeight) top = r.top - mr.height - 4;
+		if (left + mr.width > window.innerWidth) left = window.innerWidth - mr.width - 4;
+		menu.style.top = top + 'px';
+		menu.style.left = left + 'px';
+	}
+
+	// ─── Claude Hooks Manager ───────────────────────────────────────────
+
+	function targetIcon(t) { return t === 'project' ? '📁' : t === 'local' ? '🔒' : '🌍'; }
+	function targetLabel(t) { return t === 'project' ? 'project' : t === 'local' ? 'local' : 'user-global'; }
+
+	function renderHooks() {
+		const wrapper = document.getElementById('hooks-wrapper');
+		if (!wrapper) return;
+		wrapper.innerHTML = '';
+
+		const wrap = document.createElement('div');
+		wrap.className = 'hooks-section';
+
+		const header = document.createElement('div');
+		header.className = 'hooks-header';
+
+		const chevron = document.createElement('span');
+		chevron.className = 'hooks-chevron';
+		chevron.innerHTML = '&#x25BC;';
+		header.appendChild(chevron);
+
+		const title = document.createElement('span');
+		title.className = 'hooks-title';
+		title.textContent = 'Claude Hooks';
+		header.appendChild(title);
+
+		const addBtn = document.createElement('button');
+		addBtn.className = 'hooks-add-btn';
+		addBtn.title = 'Add hook';
+		addBtn.textContent = '+';
+		addBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			openHookEditor(null);
+		});
+		header.appendChild(addBtn);
+
+		const pasteBtn = document.createElement('button');
+		pasteBtn.className = 'hooks-add-btn';
+		pasteBtn.title = 'Paste hook from clipboard';
+		pasteBtn.textContent = '📋';
+		pasteBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({ type: 'pasteClaudeHook' });
+		});
+		header.appendChild(pasteBtn);
+
+		// Globals filter — by default the section shows only project + local
+		// hooks (the ones actually scoped to this workspace). User-global hooks
+		// live in ~/.claude/settings.json and clutter the list across every
+		// project they're shared with — opt in with this button.
+		const globalsBtn = document.createElement('button');
+		globalsBtn.className = 'hooks-add-btn hooks-globals-toggle' + (hooksShowGlobal ? ' on' : '');
+		globalsBtn.title = hooksShowGlobal
+			? 'Showing user-global hooks too — click to hide'
+			: 'Showing only project + local hooks — click to also show user-global';
+		globalsBtn.textContent = '🌍';
+		globalsBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			hooksShowGlobal = !hooksShowGlobal;
+			vscode.postMessage({ type: 'setHooksShowGlobal', value: hooksShowGlobal });
+			renderHooks();
+		});
+		header.appendChild(globalsBtn);
+
+		// Quick access to the underlying settings.json files — same handler
+		// the per-card badge uses, but you don't need a hook to view them.
+		const settingsBtn = document.createElement('button');
+		settingsBtn.className = 'hooks-add-btn';
+		settingsBtn.title = 'Open settings.json file…';
+		settingsBtn.textContent = '📂';
+		settingsBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			closeContextMenu();
+			const menu = document.createElement('div');
+			menu.className = 'context-menu';
+			const files = [
+				{ target: 'project', label: '📁 project — .claude/settings.json', detail: hooksContext.filePaths.project },
+				{ target: 'local', label: '🔒 local — .claude/settings.local.json', detail: hooksContext.filePaths.local },
+				{ target: 'user', label: '🌍 user-global — ~/.claude/settings.json', detail: hooksContext.filePaths.user },
+			];
+			for (const f of files) {
+				const item = document.createElement('div');
+				item.className = 'context-menu-item';
+				const lbl = document.createElement('span');
+				lbl.textContent = f.label;
+				item.appendChild(lbl);
+				if (f.detail) {
+					const det = document.createElement('span');
+					det.className = 'context-menu-item-detail';
+					det.textContent = f.detail;
+					item.appendChild(det);
+				}
+				item.addEventListener('click', () => {
+					closeContextMenu();
+					vscode.postMessage({ type: 'openClaudeHookFile', target: f.target });
+				});
+				menu.appendChild(item);
+			}
+			document.body.appendChild(menu);
+			activeContextMenu = menu;
+			const r = settingsBtn.getBoundingClientRect();
+			const mr = menu.getBoundingClientRect();
+			let top = r.bottom + 4;
+			let left = r.right - mr.width;
+			if (top + mr.height > window.innerHeight) top = r.top - mr.height - 4;
+			if (left < 4) left = 4;
+			menu.style.top = top + 'px';
+			menu.style.left = left + 'px';
+		});
+		header.appendChild(settingsBtn);
+
+		const visibleHooks = hooksShowGlobal
+			? lastClaudeHooks
+			: lastClaudeHooks.filter((h) => h.targetFile !== 'user');
+		const hiddenGlobalCount = lastClaudeHooks.length - visibleHooks.length;
+
+		if (lastClaudeHooks.length > 0) {
+			const badge = document.createElement('span');
+			badge.className = 'hooks-count';
+			badge.textContent = hiddenGlobalCount > 0
+				? visibleHooks.length + '/' + lastClaudeHooks.length
+				: String(lastClaudeHooks.length);
+			if (hiddenGlobalCount > 0) badge.title = hiddenGlobalCount + ' user-global hook(s) hidden — click 🌍 to show';
+			header.appendChild(badge);
+		}
+
+		const body = document.createElement('div');
+		body.className = 'hooks-body';
+
+		header.addEventListener('click', () => {
+			body.classList.toggle('collapsed');
+			chevron.classList.toggle('collapsed');
+			wrap.classList.toggle('collapsed');
+			vscode.postMessage({ type: 'setHooksCollapsed', value: wrap.classList.contains('collapsed') });
+		});
+
+		// Brief intro so users understand what hooks are without leaving the panel.
+		const intro = document.createElement('div');
+		intro.className = 'hooks-intro';
+		intro.textContent = 'Shell commands Claude Code runs automatically on session events (Stop, PreToolUse, etc.). Stored in .claude/settings.json files.';
+		body.appendChild(intro);
+
+		if (visibleHooks.length === 0) {
+			const empty = document.createElement('div');
+			empty.className = 'hooks-empty';
+			if (hiddenGlobalCount > 0) {
+				empty.innerHTML = 'No project/local hooks. ' + hiddenGlobalCount + ' user-global hidden — click <span class="hooks-empty-icon">🌍</span> to show.';
+			} else {
+				empty.innerHTML = 'No Claude hooks. Click <span class="hooks-empty-icon">+</span> to add one.';
+			}
+			body.appendChild(empty);
+		} else {
+			// Group by event. Sort events by ALL_HOOK_EVENTS-style canonical
+			// order, and inside each event sort by id (stable hash over command
+			// + matcher + timeout). Toggling a hook off→on does NOT change its
+			// id, so its slot in the list is preserved across toggles.
+			const eventOrder = hooksContext.events || [];
+			const byEvent = new Map();
+			for (const h of visibleHooks) {
+				if (!byEvent.has(h.event)) byEvent.set(h.event, []);
+				byEvent.get(h.event).push(h);
+			}
+			const orderedEvents = Array.from(byEvent.keys()).sort((a, b) => {
+				const ia = eventOrder.indexOf(a);
+				const ib = eventOrder.indexOf(b);
+				if (ia >= 0 && ib >= 0) return ia - ib;
+				if (ia >= 0) return -1;
+				if (ib >= 0) return 1;
+				return a.localeCompare(b);
+			});
+			for (const event of orderedEvents) {
+				const hooks = byEvent.get(event).slice().sort((x, y) => {
+					return String(x.id).localeCompare(String(y.id));
+				});
+				const subhead = document.createElement('div');
+				subhead.className = 'hooks-group-name';
+				subhead.textContent = event;
+				body.appendChild(subhead);
+				const desc = HOOK_EVENT_DESCRIPTIONS[event];
+				if (desc) {
+					const descEl = document.createElement('div');
+					descEl.className = 'hooks-group-desc';
+					descEl.textContent = desc;
+					body.appendChild(descEl);
+				}
+				for (const h of hooks) body.appendChild(createHookCard(h));
+			}
+		}
+
+		wrap.appendChild(header);
+		wrap.appendChild(body);
+		wrapper.appendChild(wrap);
+
+		const shouldCollapse = hooksCollapsed === undefined ? true : hooksCollapsed;
+		if (shouldCollapse) {
+			body.classList.add('collapsed');
+			chevron.classList.add('collapsed');
+			wrap.classList.add('collapsed');
+		}
+	}
+
+	function createHookCard(hook) {
+		const card = document.createElement('div');
+		card.className = 'hook-item';
+		card.dataset.hookId = hook.id;
+		if (!hook.enabled) card.classList.add('hook-disabled');
+
+		// Toggle — proper slider so it's obvious what it does. Title spells out
+		// "Enabled — click to disable" so first-time users get it without docs.
+		const toggle = document.createElement('button');
+		toggle.className = 'hook-toggle' + (hook.enabled ? ' hook-toggle-on' : '');
+		toggle.title = hook.enabled
+			? 'Enabled — click to disable. The hook is removed from settings.json and kept in workspace state.'
+			: 'Disabled — click to re-enable. The hook is restored to its original settings.json.';
+		const knob = document.createElement('span');
+		knob.className = 'hook-toggle-knob';
+		toggle.appendChild(knob);
+		toggle.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({ type: 'toggleClaudeHook', id: hook.id, enabled: !hook.enabled });
+		});
+		card.appendChild(toggle);
+
+		const info = document.createElement('div');
+		info.className = 'hook-info';
+
+		const top = document.createElement('div');
+		top.className = 'hook-top';
+
+		// Command/label row (kept as the primary line; clickable if it points
+		// to a script file we can open).
+		const cmdLine = document.createElement('div');
+		cmdLine.className = 'hook-cmd';
+		const scriptPath = extractScriptPath(hook.command);
+		if (scriptPath) {
+			cmdLine.classList.add('hook-cmd-clickable');
+			cmdLine.title = 'Click to open ' + scriptPath;
+			cmdLine.addEventListener('click', (e) => {
+				e.stopPropagation();
+				vscode.postMessage({ type: 'openHookScript', path: scriptPath });
+			});
+		} else {
+			cmdLine.title = hook.command;
+		}
+		cmdLine.textContent = hook.command;
+		top.appendChild(cmdLine);
+
+		// Badge for target file — pill, clickable, colored per-target.
+		const targetSpan = document.createElement('span');
+		targetSpan.className = 'hook-badge hook-badge-' + hook.targetFile;
+		targetSpan.textContent = targetLabel(hook.targetFile);
+		targetSpan.title = 'Open ' + targetLabel(hook.targetFile) + ' settings.json';
+		targetSpan.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({ type: 'openClaudeHookFile', target: hook.targetFile });
+		});
+		top.appendChild(targetSpan);
+		info.appendChild(top);
+
+		// Meta row — matcher / timeout. Event is shown in the group header.
+		const meta = [];
+		if (hook.matcher) meta.push('matcher: ' + hook.matcher);
+		if (hook.timeout) meta.push(hook.timeout + 's timeout');
+		if (meta.length) {
+			const sub = document.createElement('div');
+			sub.className = 'hook-sub';
+			sub.textContent = meta.join(' · ');
+			info.appendChild(sub);
+		}
+
+		card.appendChild(info);
+
+		card.addEventListener('contextmenu', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			closeContextMenu();
+			const menu = document.createElement('div');
+			menu.className = 'context-menu';
+
+			const editItem = document.createElement('div');
+			editItem.className = 'context-menu-item';
+			editItem.textContent = 'Edit…';
+			editItem.addEventListener('click', () => { closeContextMenu(); openHookEditor(hook); });
+			menu.appendChild(editItem);
+
+			const copyItem = document.createElement('div');
+			copyItem.className = 'context-menu-item';
+			copyItem.textContent = 'Copy to clipboard';
+			copyItem.addEventListener('click', () => {
+				closeContextMenu();
+				vscode.postMessage({ type: 'copyClaudeHook', hook });
+			});
+			menu.appendChild(copyItem);
+
+			const sep = document.createElement('div');
+			sep.className = 'context-menu-separator';
+			menu.appendChild(sep);
+
+			const delItem = document.createElement('div');
+			delItem.className = 'context-menu-item context-menu-item-danger';
+			delItem.textContent = 'Delete';
+			delItem.addEventListener('click', () => {
+				closeContextMenu();
+				vscode.postMessage({ type: 'deleteClaudeHook', id: hook.id });
+			});
+			menu.appendChild(delItem);
+
+			document.body.appendChild(menu);
+			activeContextMenu = menu;
+			const r = menu.getBoundingClientRect();
+			let top = e.clientY;
+			let left = e.clientX;
+			if (top + r.height > window.innerHeight) top = window.innerHeight - r.height - 4;
+			if (left + r.width > window.innerWidth) left = window.innerWidth - r.width - 4;
+			menu.style.top = top + 'px';
+			menu.style.left = left + 'px';
+		});
+
+		return card;
+	}
+
+	/**
+	 * If a hook command looks like a wrapper around a script file (.sh, .py,
+	 * .js, etc.) — possibly with $CLAUDE_PROJECT_DIR or ~/ prefixes — pull out
+	 * the path so we can make the command row open it in the editor.
+	 *
+	 * Captures the FULL whitespace-delimited token ending in a script
+	 * extension. That way shell quirks like `"$CLAUDE_PROJECT_DIR"/.path.sh`
+	 * (quote ends mid-token) come through intact; the backend strips quotes
+	 * and expands env vars / ~.
+	 */
+	function extractScriptPath(cmd) {
+		if (!cmd) return null;
+		const re = /(?:^|\s)(\S+\.(?:sh|py|js|ts|mjs|cjs|rb|pl|bash|zsh|fish))(?=\s|$|;|&|\||\))/;
+		const m = cmd.match(re);
+		if (!m) return null;
+		return m[1];
+	}
+
+	function hookDisplayName(hook) {
+		if (hook.source && hook.source.kind === 'preset' && hook.source.presetKey) {
+			return '🎯 ' + hook.source.presetKey;
+		}
+		if (hook.source && hook.source.kind === 'command-ref' && hook.source.commandRef) {
+			return '▶ ' + hook.source.commandRef;
+		}
+		// Truncate raw command
+		const c = hook.command || '';
+		if (c.length > 60) return c.substring(0, 57) + '…';
+		return c;
+	}
+
+	function openHookEditor(existingHook, prefill) {
+		closeContextMenu();
+		const prior = document.querySelector('.combined-modal-backdrop[data-modal="hook"]');
+		if (prior) prior.remove();
+		// Expand the hooks section if collapsed so the editor is visible.
+		const hWrapper = document.getElementById('hooks-wrapper');
+		const hBody = hWrapper ? hWrapper.querySelector('.hooks-body') : null;
+		const hChevron = hWrapper ? hWrapper.querySelector('.hooks-chevron') : null;
+		const hWrap = hWrapper ? hWrapper.querySelector('.hooks-section') : null;
+		if (hBody && hBody.classList.contains('collapsed')) {
+			hBody.classList.remove('collapsed');
+			if (hChevron) hChevron.classList.remove('collapsed');
+			if (hWrap) hWrap.classList.remove('collapsed');
+		}
+
+		const isEdit = !!existingHook;
+		const originalId = existingHook ? existingHook.id : undefined;
+		/** @type {any} */
+		const draft = existingHook
+			? JSON.parse(JSON.stringify(existingHook))
+			: (prefill
+				? {
+					event: prefill.event || 'Stop',
+					matcher: prefill.matcher || '',
+					command: prefill.command || '',
+					timeout: prefill.timeout,
+					targetFile: 'project',
+					enabled: true,
+				}
+				: { event: 'Stop', matcher: '', command: '', timeout: undefined, targetFile: 'project', enabled: true });
+		let actionMode = 'custom'; // preset | command | custom
+		let currentPresetKey = '';
+		if (draft.source) {
+			actionMode = draft.source.kind === 'preset' ? 'preset' : draft.source.kind === 'command-ref' ? 'command' : 'custom';
+			currentPresetKey = draft.source.presetKey || '';
+		}
+
+		const backdrop = document.createElement('div');
+		backdrop.className = 'combined-modal-backdrop';
+		backdrop.dataset.modal = 'hook';
+		backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+
+		const modal = document.createElement('div');
+		modal.className = 'combined-modal hook-modal';
+		modal.addEventListener('click', (e) => e.stopPropagation());
+
+		// Header
+		const headerRow = document.createElement('div');
+		headerRow.className = 'combined-modal-header';
+		const titleEl = document.createElement('span');
+		titleEl.className = 'combined-modal-title';
+		titleEl.textContent = isEdit ? 'Edit Claude Hook' : 'New Claude Hook';
+		headerRow.appendChild(titleEl);
+		const closeBtn = document.createElement('button');
+		closeBtn.className = 'combined-modal-close';
+		closeBtn.textContent = '✕';
+		closeBtn.addEventListener('click', close);
+		headerRow.appendChild(closeBtn);
+		modal.appendChild(headerRow);
+
+		// Event dropdown
+		const evGroup = document.createElement('div');
+		evGroup.className = 'combined-modal-field';
+		const evLabel = document.createElement('label');
+		evLabel.textContent = 'Event';
+		const evSelect = document.createElement('select');
+		for (const ev of (hooksContext.events.length ? hooksContext.events : ['Stop'])) {
+			const opt = document.createElement('option');
+			opt.value = ev; opt.textContent = ev;
+			if (draft.event === ev) opt.selected = true;
+			evSelect.appendChild(opt);
+		}
+		evSelect.addEventListener('change', () => { draft.event = evSelect.value; renderMatcher(); });
+		evGroup.appendChild(evLabel); evGroup.appendChild(evSelect);
+		modal.appendChild(evGroup);
+
+		// Matcher (conditional)
+		const matcherGroup = document.createElement('div');
+		matcherGroup.className = 'combined-modal-field';
+		const matcherLabel = document.createElement('label');
+		matcherLabel.textContent = 'Matcher (optional regex)';
+		const matcherInput = document.createElement('input');
+		matcherInput.type = 'text';
+		matcherInput.value = draft.matcher || '';
+		matcherInput.placeholder = 'e.g. ^Bash$ for PreToolUse';
+		matcherInput.addEventListener('input', () => { draft.matcher = matcherInput.value; });
+		matcherGroup.appendChild(matcherLabel); matcherGroup.appendChild(matcherInput);
+		modal.appendChild(matcherGroup);
+		function renderMatcher() {
+			matcherGroup.style.display = hooksContext.matcherEvents.indexOf(draft.event) >= 0 ? '' : 'none';
+		}
+		renderMatcher();
+
+		// Target file
+		const tgtGroup = document.createElement('div');
+		tgtGroup.className = 'combined-modal-field';
+		const tgtLabel = document.createElement('label');
+		tgtLabel.textContent = 'Target file';
+		const tgtSelect = document.createElement('select');
+		for (const t of [
+			{ v: 'project', label: '📁 project — .claude/settings.json (committed)' },
+			{ v: 'local', label: '🔒 local — .claude/settings.local.json (gitignored)' },
+			{ v: 'user', label: '🌍 user-global — ~/.claude/settings.json' },
+		]) {
+			const opt = document.createElement('option');
+			opt.value = t.v; opt.textContent = t.label;
+			if (draft.targetFile === t.v) opt.selected = true;
+			tgtSelect.appendChild(opt);
+		}
+		tgtSelect.addEventListener('change', () => { draft.targetFile = tgtSelect.value; });
+		tgtGroup.appendChild(tgtLabel); tgtGroup.appendChild(tgtSelect);
+		modal.appendChild(tgtGroup);
+
+		// Action mode
+		const actGroup = document.createElement('div');
+		actGroup.className = 'combined-modal-field';
+		const actLabel = document.createElement('label');
+		actLabel.textContent = 'Action';
+		actGroup.appendChild(actLabel);
+
+		const modeWrap = document.createElement('div');
+		modeWrap.className = 'hook-mode-wrap';
+		const modes = [
+			{ v: 'preset', label: 'Preset' },
+			{ v: 'command', label: 'Existing command' },
+			{ v: 'custom', label: 'Custom shell' },
+		];
+		for (const m of modes) {
+			const rl = document.createElement('label');
+			rl.className = 'hook-mode-radio';
+			const r = document.createElement('input');
+			r.type = 'radio'; r.name = 'hook-mode'; r.value = m.v;
+			if (actionMode === m.v) r.checked = true;
+			r.addEventListener('change', () => { actionMode = m.v; renderAction(); });
+			rl.appendChild(r);
+			rl.appendChild(document.createTextNode(' ' + m.label));
+			modeWrap.appendChild(rl);
+		}
+		actGroup.appendChild(modeWrap);
+
+		const actionExtra = document.createElement('div');
+		actionExtra.className = 'hook-action-extra';
+		actGroup.appendChild(actionExtra);
+		modal.appendChild(actGroup);
+
+		function renderAction() {
+			actionExtra.innerHTML = '';
+			if (actionMode === 'preset') {
+				const presetSelect = document.createElement('select');
+				const presets = [
+					{ k: 'play-sound', label: '🔊 Play sound' + (hooksContext.presetAvailability.sound ? '' : ' ⚠'), cmd: hooksContext.presetTemplates.sound },
+					{ k: 'notification', label: '🔔 Desktop notification' + (hooksContext.presetAvailability.notification ? '' : ' ⚠'), cmd: hooksContext.presetTemplates.notification },
+					{ k: 'append-timestamp', label: '📝 Append timestamp', cmd: hooksContext.presetTemplates.appendTimestamp },
+					{ k: 'wait-seconds', label: '⏱ Wait N seconds', cmd: '' /* user fills in */ },
+					{ k: 'open-url', label: '↗ Open URL / file / app' + (hooksContext.presetAvailability.open ? '' : ' ⚠'), cmd: hooksContext.presetTemplates.open },
+				];
+				const defaultOpt = document.createElement('option');
+				defaultOpt.value = ''; defaultOpt.textContent = '— choose preset —';
+				presetSelect.appendChild(defaultOpt);
+				for (const p of presets) {
+					const opt = document.createElement('option');
+					opt.value = p.k; opt.textContent = p.label;
+					if (currentPresetKey === p.k) opt.selected = true;
+					presetSelect.appendChild(opt);
+				}
+				presetSelect.addEventListener('change', () => {
+					const sel = presets.find((p) => p.k === presetSelect.value);
+					if (!sel) return;
+					currentPresetKey = sel.k;
+					if (sel.k === 'wait-seconds') {
+						const n = parseFloat(prompt('How many seconds?', '5') || '');
+						draft.command = (navigator.platform.indexOf('Win') !== -1 ? 'timeout /t ' + n + ' /nobreak >nul' : 'sleep ' + n);
+					} else {
+						draft.command = sel.cmd || '';
+					}
+					draft.source = { kind: 'preset', presetKey: sel.k };
+					cmdInput.value = draft.command;
+				});
+				actionExtra.appendChild(presetSelect);
+				if (hooksContext.presetAvailability.installHint) {
+					const hint = document.createElement('div');
+					hint.className = 'hook-install-hint';
+					hint.textContent = hooksContext.presetAvailability.installHint;
+					actionExtra.appendChild(hint);
+				}
+			} else if (actionMode === 'command') {
+				const cmdSelect = document.createElement('select');
+				const defOpt = document.createElement('option');
+				defOpt.value = ''; defOpt.textContent = '— choose command —';
+				cmdSelect.appendChild(defOpt);
+				for (const cmd of hooksContext.commands) {
+					const opt = document.createElement('option');
+					opt.value = cmd.name;
+					opt.textContent = cmd.name + (cmd.group ? '  (' + cmd.group + ')' : '');
+					if (draft.source && draft.source.commandRef === cmd.name) opt.selected = true;
+					cmdSelect.appendChild(opt);
+				}
+				cmdSelect.addEventListener('change', () => {
+					if (!cmdSelect.value) return;
+					const picked = hooksContext.commands.find(function(c) { return c.name === cmdSelect.value; });
+					if (!picked) return;
+					draft.source = { kind: 'command-ref', commandRef: picked.name };
+					// IMPORTANT: store the actual shell script, not the command name —
+					// otherwise the hook tries to execute the human-readable name.
+					draft.command = picked.command;
+					cmdInput.value = draft.command;
+				});
+				actionExtra.appendChild(cmdSelect);
+				const hint = document.createElement('div');
+				hint.className = 'hook-install-hint';
+				hint.textContent = 'The script below is editable — tweak it for this hook without touching the original command.';
+				actionExtra.appendChild(hint);
+			} else {
+				draft.source = { kind: 'custom' };
+			}
+		}
+
+		// Command field — textarea so long shell scripts wrap and stay editable.
+		const cmdGroup = document.createElement('div');
+		cmdGroup.className = 'combined-modal-field';
+		const cmdLabel = document.createElement('label');
+		cmdLabel.textContent = 'Shell script (this is what runs)';
+		const cmdInput = document.createElement('textarea');
+		cmdInput.className = 'hook-cmd-input';
+		cmdInput.rows = 3;
+		cmdInput.value = draft.command || '';
+		cmdInput.placeholder = 'shell command — e.g. echo hi >> /tmp/log';
+		cmdInput.addEventListener('input', () => { draft.command = cmdInput.value; });
+		cmdGroup.appendChild(cmdLabel); cmdGroup.appendChild(cmdInput);
+		modal.appendChild(cmdGroup);
+
+		renderAction();
+
+		// Timeout
+		const tmGroup = document.createElement('div');
+		tmGroup.className = 'combined-modal-field';
+		const tmLabel = document.createElement('label');
+		tmLabel.textContent = 'Timeout (seconds, optional)';
+		const tmInput = document.createElement('input');
+		tmInput.type = 'text';
+		tmInput.value = draft.timeout != null ? String(draft.timeout) : '';
+		tmInput.placeholder = '10';
+		tmInput.addEventListener('input', () => {
+			const v = parseFloat(tmInput.value);
+			draft.timeout = isNaN(v) ? undefined : v;
+		});
+		tmGroup.appendChild(tmLabel); tmGroup.appendChild(tmInput);
+		modal.appendChild(tmGroup);
+
+		// Footer
+		const footer = document.createElement('div');
+		footer.className = 'combined-modal-footer';
+		const cancelBtn = document.createElement('button');
+		cancelBtn.className = 'btn-secondary';
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.addEventListener('click', close);
+		const saveBtn = document.createElement('button');
+		saveBtn.className = 'btn-primary';
+		saveBtn.textContent = 'Save';
+		saveBtn.addEventListener('click', () => {
+			if (!draft.command || !draft.command.trim()) { cmdInput.focus(); return; }
+			vscode.postMessage({
+				type: 'saveClaudeHook',
+				hook: {
+					event: draft.event,
+					matcher: draft.matcher || undefined,
+					command: draft.command,
+					timeout: draft.timeout,
+					targetFile: draft.targetFile,
+					enabled: true,
+					source: draft.source,
+				},
+				originalId: originalId,
+			});
+			close();
+		});
+		footer.appendChild(cancelBtn); footer.appendChild(saveBtn);
+		modal.appendChild(footer);
+
+		backdrop.appendChild(modal);
+		const hookBody = document.querySelector('#hooks-wrapper .hooks-body');
+		(hookBody || document.body).insertBefore(backdrop, hookBody ? hookBody.firstChild : null);
+		backdrop.scrollIntoView({ block: 'nearest' });
+
+		function close() { backdrop.remove(); }
 	}
 
 	// Signal to extension that webview JS is ready to receive messages

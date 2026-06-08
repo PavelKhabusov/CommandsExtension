@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { getWebviewHtml, WebviewMessageHandler, sendCommandsToWebview, sendActiveTerminals, sendUploadProgress, sendUploadStaleness } from './webviewBase';
+import { getWebviewHtml, WebviewMessageHandler, sendCommandsToWebview, sendActiveTerminals, sendUploadProgress, sendUploadStaleness, sendCombinedOpProgress } from './webviewBase';
 import { TerminalManager } from './terminalManager';
-import { uploadProgressBus, uploadStalenessBus } from './extension';
+import { uploadProgressBus, uploadStalenessBus, combinedOpProgressBus } from './extension';
 
 export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'commandsExtension.sidebarView';
@@ -48,7 +48,12 @@ export class CommandsSidebarProvider implements vscode.WebviewViewProvider {
 				sendUploadStaleness((msg) => this._view!.webview.postMessage(msg), key, info);
 			}
 		});
-		webviewView.onDidDispose(() => { progressSub.dispose(); stalenessSub.dispose(); });
+		const combinedSub = combinedOpProgressBus.subscribe((p) => {
+			if (this._view) {
+				sendCombinedOpProgress((msg) => this._view!.webview.postMessage(msg), p);
+			}
+		});
+		webviewView.onDidDispose(() => { progressSub.dispose(); stalenessSub.dispose(); combinedSub.dispose(); });
 	}
 
 	public async refresh(): Promise<void> {

@@ -30,8 +30,36 @@
       {
         "command": "commandsExtension.openPanel",
         "title": "Commands: Open Panel"
+      },
+      {
+        "command": "commandsExtension.uploadFile",
+        "title": "Commands Extension: Upload to Server",
+        "category": "Commands"
       }
     ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "commandsExtension.uploadFile",
+          "when": "commandsExtension.hasServerUploads && !explorerResourceIsFolder",
+          "group": "commandsExtension@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "commandsExtension.uploadFile",
+          "when": "commandsExtension.hasServerUploads && resourceScheme == 'file'",
+          "group": "commandsExtension@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "commandsExtension.uploadFile",
+          "when": "commandsExtension.hasServerUploads && resourceScheme == 'file'",
+          "group": "commandsExtension@1"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {

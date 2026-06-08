@@ -1,12 +1,16 @@
 import * as fs from 'fs';
 import * as http from 'http';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { CommandsPanel } from './webviewPanel';
 import { CommandsSidebarProvider } from './sidebarProvider';
 import { TerminalManager } from './terminalManager';
 import { UploadRunner } from './uploadRunner';
-import { UploadProgress } from './uploadsTypes';
-import { isPathInUploadScope, resolveItems, loadUploads } from './uploadsProvider';
+import { UploadProgress, ResolvedUpload } from './uploadsTypes';
+import { isPathInUploadScope, resolveItems, loadUploads, resolveServer } from './uploadsProvider';
+import { loadCommands, loadCombinedOps } from './commandsProvider';
+import { CombinedOpDefinition, CombinedOpProgress } from './combinedOpsTypes';
+import { CombinedOpRunner } from './combinedOpRunner';
 
 type ProgressListener = (p: UploadProgress) => void;
 
@@ -23,6 +27,20 @@ class UploadProgressBus {
 
 export const uploadProgressBus = new UploadProgressBus();
 export let uploadRunner: UploadRunner | undefined;
+
+type CombinedProgressListener = (p: CombinedOpProgress) => void;
+
+class CombinedOpProgressBus {
+  private readonly _listeners = new Set<CombinedProgressListener>();
+  emit(p: CombinedOpProgress): void { for (const l of this._listeners) l(p); }
+  subscribe(l: CombinedProgressListener): vscode.Disposable {
+    this._listeners.add(l);
+    return new vscode.Disposable(() => this._listeners.delete(l));
+  }
+}
+
+export const combinedOpProgressBus = new CombinedOpProgressBus();
+export let combinedOpRunner: CombinedOpRunner | undefined;
 
 // ── Staleness tracking ────────────────────────────────────────────
 
@@ -507,6 +525,19 @@ async function handleRunCommand(
   const cfg = vscode.workspace.getConfiguration('commandsExtension');
   const configFile = cfg.get<string>('configFile', 'commands-list.json');
 
+  // Combined operations take priority — they may share a name with a regular
+  // command but the user clicked the combined card specifically.
+  try {
+    const ops = await loadCombinedOps(myRoot, configFile);
+    const op = ops.find((o) => o.name === name);
+    if (op && combinedOpRunner) {
+      void combinedOpRunner.run(op);
+      return;
+    }
+  } catch {
+    /* fall through to commands / uploads */
+  }
+
   const { loadCommands } = await import('./commandsProvider');
   const groups = await loadCommands(myRoot, configFile);
   for (const g of groups) {
@@ -695,14 +726,114 @@ async function publishCommandsToExternalApi(
       /* no uploads file or parse error — skip */
     }
 
+    // Combined operations from commands-list.json — read-only on the hub side.
+    let combined: Array<Record<string, unknown>> = [];
+    try {
+      const ops = await loadCombinedOps(workspaceRoot, configFile);
+      const lastStatuses = combinedOpRunner?.getLastStatuses() ?? [];
+      const statusByName = new Map(lastStatuses.map((s) => [s.opName, s]));
+      combined = ops.map((op) => ({
+        name: op.name,
+        steps: op.steps,
+        stopOnError: op.stopOnError !== false,
+        running: combinedOpRunner?.isRunning(op.name) ?? false,
+        progress: statusByName.get(op.name) ?? null,
+      }));
+    } catch {
+      /* missing or invalid combined field — skip */
+    }
+
     externalApiPost('/events/commands', {
       workspacePath: workspaceRoot,
       commands,
       uploadRecommendations,
+      combined,
     });
   } catch {
     /* ignore — endpoint may be offline or extension may not be ready */
   }
+}
+
+/**
+ * Toggle the `commandsExtension.hasServerUploads` context key so the
+ * "Upload to Server" right-click command only appears in projects that
+ * actually define server uploads.
+ */
+async function refreshServerUploadsContext(workspaceRoot: string, uploadsFile: string): Promise<void> {
+  let hasUploads = false;
+  try {
+    const { groups } = await loadUploads(workspaceRoot, uploadsFile);
+    hasUploads = groups.some((g) => g.uploads.length > 0);
+  } catch {
+    hasUploads = false;
+  }
+  await vscode.commands.executeCommand('setContext', 'commandsExtension.hasServerUploads', hasUploads);
+}
+
+/**
+ * Right-click handler: upload a single tracked file to its server. The file is
+ * sent to the exact remote location it maps to, reusing the upload's item/remote
+ * configuration. When several uploads cover the file, the user picks the target.
+ */
+async function uploadSingleFileToServer(resource?: vscode.Uri): Promise<void> {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) {
+    vscode.window.showErrorMessage('Commands Extension: no workspace folder open.');
+    return;
+  }
+
+  // explorer/context passes the Uri; editor/context may not — fall back to the
+  // active editor's document.
+  const uri = resource ?? vscode.window.activeTextEditor?.document.uri;
+  if (!uri || uri.scheme !== 'file') {
+    vscode.window.showWarningMessage('Commands Extension: no file selected to upload.');
+    return;
+  }
+  const filePath = uri.fsPath;
+  const relName = path.relative(workspaceRoot, filePath) || path.basename(filePath);
+
+  const uploadsFile = vscode.workspace
+    .getConfiguration('commandsExtension')
+    .get<string>('uploadsFile', 'server-uploads.local.json');
+  const { groups, servers } = await loadUploads(workspaceRoot, uploadsFile);
+
+  // Every upload whose item/exclude scope covers this file is a valid target.
+  const matches: Array<{ resolved: ResolvedUpload; name: string }> = [];
+  for (const g of groups) {
+    for (const u of g.uploads) {
+      if (!isPathInUploadScope(filePath, workspaceRoot, u.items, u.exclude || [])) continue;
+      const resolved = resolveServer(u, servers);
+      if (!resolved) continue;
+      matches.push({ resolved, name: u.name });
+    }
+  }
+
+  if (matches.length === 0) {
+    vscode.window.showWarningMessage(
+      `Commands Extension: "${relName}" is not tracked by any server upload.`
+    );
+    return;
+  }
+
+  let chosen = matches[0].resolved;
+  if (matches.length > 1) {
+    const pick = await vscode.window.showQuickPick(
+      matches.map((m) => ({
+        label: m.name,
+        description: `${m.resolved.user}@${m.resolved.host} → ${m.resolved.remoteDir}`,
+        resolved: m.resolved,
+      })),
+      {
+        title: `Upload "${path.basename(filePath)}" to…`,
+        placeHolder: 'Select the destination server',
+      }
+    );
+    if (!pick) return;
+    chosen = pick.resolved;
+  }
+
+  if (!uploadRunner) return;
+  await uploadRunner.run(workspaceRoot, chosen, new Set([filePath]));
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -725,8 +856,69 @@ export function activate(context: vscode.ExtensionContext): void {
     (key, filePaths, partial, scope) => uploadStalenessTracker!.onUploadDone(key, filePaths, partial, scope)
   );
 
+  combinedOpRunner = new CombinedOpRunner(
+    (p) => combinedOpProgressBus.emit(p),
+    {
+      getCommandByName: async (name) => {
+        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!wsRoot) return undefined;
+        const cfgFile = vscode.workspace
+          .getConfiguration('commandsExtension')
+          .get<string>('configFile', 'commands-list.json');
+        const groups = await loadCommands(wsRoot, cfgFile);
+        for (const g of groups) {
+          const c = g.commands.find((cc) => cc.name === name);
+          if (c) return c;
+        }
+        return undefined;
+      },
+      runUploadByKey: async (key, fileFilter) => {
+        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!wsRoot || !uploadRunner) throw new Error('no workspace or upload runner');
+        const sep = key.indexOf(':');
+        const groupName = sep === -1 ? 'Uploads' : key.slice(0, sep);
+        const uploadName = sep === -1 ? key : key.slice(sep + 1);
+        const uploadsFile = vscode.workspace
+          .getConfiguration('commandsExtension')
+          .get<string>('uploadsFile', 'server-uploads.local.json');
+        const ud = await loadUploads(wsRoot, uploadsFile);
+        for (const g of ud.groups) {
+          if ((g.name || 'Uploads') !== groupName) continue;
+          const u = g.uploads.find((uu) => uu.name === uploadName);
+          if (!u) continue;
+          const resolved = resolveServer(u, ud.servers);
+          if (!resolved) throw new Error(`upload "${key}" has unresolved server`);
+          await uploadRunner.run(wsRoot, resolved, fileFilter);
+          return;
+        }
+        throw new Error(`upload "${key}" not found`);
+      },
+      resolveAutoUploadForServer: async (server) => {
+        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!wsRoot) return [];
+        const uploadsFile = vscode.workspace
+          .getConfiguration('commandsExtension')
+          .get<string>('uploadsFile', 'server-uploads.local.json');
+        const ud = await loadUploads(wsRoot, uploadsFile);
+        const stalenessMap = uploadStalenessTracker?.getStalenessMap() ?? {};
+        const recommendations = computeUploadRecommendations(ud, stalenessMap);
+        const match = recommendations.find((r) => r.display === server);
+        if (!match) return [];
+        return match.uploadKeys.map((uk) => ({
+          uploadKey: uk,
+          staleFiles: new Set(stalenessMap[uk]?.staleFiles ?? []),
+        }));
+      },
+    },
+  );
+
   context.subscriptions.push(installExternalApiForwarder());
   context.subscriptions.push(installExternalApiSubscriber(context));
+
+  // Forward combined-op progress to the hub (no-op when externalApiUrl unset).
+  context.subscriptions.push(
+    combinedOpProgressBus.subscribe((p) => externalApiPost('/events/combined-progress', p)),
+  );
 
   // Re-publish commands (with refreshed per-upload staleness + recommendations)
   // whenever staleness changes. Debounced so rapid file events don't spam.
@@ -771,6 +963,14 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(republishCommand);
 
+  const uploadFileCommand = vscode.commands.registerCommand(
+    'commandsExtension.uploadFile',
+    (resource?: vscode.Uri) => {
+      void uploadSingleFileToServer(resource);
+    }
+  );
+  context.subscriptions.push(uploadFileCommand);
+
   const sidebarProvider = new CommandsSidebarProvider(context.extensionUri, context);
   const sidebarRegistration = vscode.window.registerWebviewViewProvider(
     CommandsSidebarProvider.viewType,
@@ -797,6 +997,9 @@ export function activate(context: vscode.ExtensionContext): void {
     const ps1Watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], '*.ps1')
     );
+    const claudeHooksWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], '.claude/settings*.json')
+    );
 
     const onFileChange = () => {
       CommandsPanel.refresh();
@@ -806,13 +1009,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const onUploadsConfigChange = () => {
       onFileChange();
-      uploadStalenessTracker!.refreshScopesFromConfig(
-        vscode.workspace.workspaceFolders![0].uri.fsPath,
-        uploadsFile
-      ).catch(() => undefined);
+      const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
+      uploadStalenessTracker!.refreshScopesFromConfig(root, uploadsFile).catch(() => undefined);
+      void refreshServerUploadsContext(root, uploadsFile);
     };
 
-    for (const w of [commandsWatcher, packageWatcher, ps1Watcher]) {
+    for (const w of [commandsWatcher, packageWatcher, ps1Watcher, claudeHooksWatcher]) {
       w.onDidChange(onFileChange);
       w.onDidCreate(onFileChange);
       w.onDidDelete(onFileChange);
@@ -835,12 +1037,16 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!isIgnored(uri.fsPath)) uploadStalenessTracker!.onFileDeleted(uri.fsPath);
     });
 
-    context.subscriptions.push(commandsWatcher, packageWatcher, uploadsWatcher, ps1Watcher, staleWatcher);
+    context.subscriptions.push(commandsWatcher, packageWatcher, uploadsWatcher, ps1Watcher, claudeHooksWatcher, staleWatcher);
 
     // Populate scopes from current config + scan for new-in-scope files
     uploadStalenessTracker
       .refreshScopesFromConfig(vscode.workspace.workspaceFolders[0].uri.fsPath, uploadsFile)
       .catch(() => undefined);
+
+    // Gate the "Upload to Server" right-click command on whether this project
+    // defines any server uploads.
+    void refreshServerUploadsContext(vscode.workspace.workspaceFolders[0].uri.fsPath, uploadsFile);
 
     // Initial publish so the external endpoint has commands without waiting
     // for a file edit (no-op when externalApiUrl is empty).
