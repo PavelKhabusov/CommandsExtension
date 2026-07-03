@@ -267,20 +267,36 @@ export async function resolveItems(
     if (!raw || typeof raw !== 'string') continue;
 
     if (raw.includes('*')) {
-      const matches = await vscode.workspace.findFiles(
-        new vscode.RelativePattern(workspaceRoot, raw),
-        '**/node_modules/**'
-      );
-      for (const uri of matches) {
-        const abs = uri.fsPath;
-        const rel = path.relative(workspaceRoot, abs).split(path.sep).join('/');
-        if (isExcluded(rel, excludeRegexes)) continue;
-        out.push({
-          type: 'file',
-          absolutePath: abs,
-          relativeFromBase: path.basename(abs),
-          baseDir: path.dirname(abs),
-        });
+      // Walk the filesystem directly instead of vscode.workspace.findFiles so
+      // glob items behave exactly like folder/file items: they don't depend on
+      // the user's .gitignore / files.exclude / search.exclude settings and so
+      // still find files inside gitignored folders (e.g. example/bundle).
+      const cleaned = raw.replace(/^\.\//, '').replace(/^\//, '');
+      const re = globToRegex(cleaned);
+
+      // The leading wildcard-free segments are the walk root and the structure
+      // base, mirroring how a folder item preserves paths relative to the folder.
+      const litSegs: string[] = [];
+      for (const seg of cleaned.split('/')) {
+        if (seg.includes('*') || seg.includes('?')) break;
+        litSegs.push(seg);
+      }
+      const baseRel = litSegs.join('/');
+      const baseAbs = baseRel ? path.join(workspaceRoot, baseRel) : workspaceRoot;
+      const baseStat = await statSafe(baseAbs);
+      if (!baseStat || !baseStat.isDirectory()) continue;
+
+      // Reuse the same walkDir used by the folder branch (same exclude +
+      // recursion semantics), then keep only entries matching the glob.
+      const walked: ResolvedItem[] = [];
+      await walkDir(baseAbs, baseAbs, excludeRegexes, walked);
+      for (const it of walked) {
+        const relFromWs = path.relative(workspaceRoot, it.absolutePath).split(path.sep).join('/');
+        if (!re.test(relFromWs)) continue;
+        // Re-check excludes against the workspace-relative path so glob discovery
+        // stays consistent with isPathInUploadScope's glob exclude handling.
+        if (isExcluded(relFromWs, excludeRegexes)) continue;
+        out.push(it);
       }
       continue;
     }
