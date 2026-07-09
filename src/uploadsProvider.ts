@@ -315,7 +315,13 @@ export async function resolveItems(
         baseDir: path.dirname(abs),
       });
     } else if (stat.isDirectory()) {
-      await walkDir(abs, abs, excludeRegexes, out);
+      // rsync-style trailing-slash semantics:
+      //   "folder/" → upload the folder's CONTENTS into remoteDir (base = folder)
+      //   "folder"  → keep the folder itself on the server (base = parent, so the
+      //               folder name is preserved in the remote path)
+      const hasTrailingSlash = /[\\/]$/.test(raw.trim());
+      const base = hasTrailingSlash ? abs : path.dirname(abs);
+      await walkDir(abs, base, excludeRegexes, out);
     }
   }
 
