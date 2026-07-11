@@ -42,6 +42,14 @@
       "remoteDir": "/var/www/staging/",
       "items": ["./dist/"],
       "exclude": ["**/*.map"]
+    },
+    {
+      "name": "Next.js export → prod (mirror: чистит старые билды)",
+      "server": "main",
+      "remoteDir": "/public_html/app/",
+      "items": ["./out/"],
+      "mode": "mirror",
+      "protectRemote": [".htaccess", "api/**"]
     }
   ]
 }

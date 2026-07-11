@@ -2,6 +2,13 @@
 
 All notable changes to Commands Extension are documented here.
 
+## [0.0.16] - 2026-07-10
+
+### Added
+- **Mirror deploys** (`"mode": "mirror"` on an upload) — after a full upload the runner walks `remoteDir`, deletes remote files that don't exist locally and prunes now-empty directories. Built for hashed-build deploys (Next.js `out/`, Vite `dist/`): stale `_next/static/<hash>` chunks from previous builds no longer pile up on the server. `protectRemote` globs (relative to `remoteDir`) mark server-side files that must never be deleted; `.htaccess` is always protected implicitly. Mirror is skipped on partial (auto/set-cover) uploads — deletion only runs when the full local state is known. The done-message reports `mirror: removed N stale`.
+- **Parallel transfers** (`"connections": N`, 1–8) — the runner opens a pool of FTP/SFTP connections and distributes the file queue between them (default 4 for ftp/ftps, 2 for sftp). Directory creation is cached per deploy instead of an `ensureDir`+`cd` round-trip per file — the old behaviour made many-small-files deploys crawl.
+- **`skipUnchanged` globs** — files matching the globs whose remote size equals the local size are skipped. Meant for content-hashed paths (`_next/static/**`): repeat deploys upload only new chunks and HTML instead of re-pushing tens of MB. The done-message reports `skipped N unchanged`.
+
 ## [0.0.15] - 2026-06-08
 
 ### Added

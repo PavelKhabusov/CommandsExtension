@@ -1697,6 +1697,8 @@
 			}
 			if (status && status.filesTotal) parts.push(status.filesDone + '/' + status.filesTotal);
 			if (status && status.status === 'connecting') parts.push(status.message || 'Connecting…');
+			// Фазы без байтового прогресса (скан сервера, mirror-очистка) шлют только message
+			if (status && status.status === 'running' && status.message && !status.currentFile) parts.push(status.message);
 			text.textContent = parts.join(' · ');
 			statusEl.appendChild(text);
 		} else if (staleness === 'stale' && key && getAutoUploadKeys().has(key)) {
@@ -2065,6 +2067,8 @@
 						parts.push(formatBytesShort(upStatus.speedBps) + '/s');
 					}
 					if (upStatus.filesTotal) parts.push(upStatus.filesDone + '/' + upStatus.filesTotal);
+					if (upStatus.status === 'running' && upStatus.message && !upStatus.currentFile) parts.push(upStatus.message);
+					if (upStatus.status === 'connecting') parts.push(upStatus.message || 'Connecting…');
 					text.textContent = parts.join(' · ');
 					statusEl.appendChild(text);
 				}

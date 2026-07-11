@@ -55,6 +55,10 @@ export function resolveServer(
     items: upload.items,
     exclude: upload.exclude || [],
     onExists: upload.onExists,
+    mode: upload.mode,
+    protectRemote: upload.protectRemote,
+    skipUnchanged: upload.skipUnchanged,
+    connections: upload.connections,
   };
 }
 
@@ -90,6 +94,10 @@ export async function loadUploads(workspaceRoot: string, configFileName: string)
     items: u.items,
     exclude: u.exclude,
     onExists: u.onExists,
+    mode: u.mode,
+    protectRemote: u.protectRemote,
+    skipUnchanged: u.skipUnchanged,
+    connections: u.connections,
   }));
 
   const groupMap = new Map<string, UploadDefinition[]>();

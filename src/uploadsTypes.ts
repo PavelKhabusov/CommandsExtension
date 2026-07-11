@@ -22,6 +22,27 @@ export interface UploadDefinition {
   items: string[];
   exclude?: string[];
   onExists?: 'overwrite' | 'skip';
+  /**
+   * 'mirror' — after uploading, delete remote files under remoteDir that do
+   * not exist locally (stale hashed builds, removed pages). Directories left
+   * empty are pruned too. Default 'upload' (never deletes anything).
+   */
+  mode?: 'upload' | 'mirror';
+  /**
+   * Glob patterns (relative to remoteDir, posix) that mirror-mode must never
+   * delete — server-side files living inside the deploy dir ('.htaccess',
+   * 'api/**', …). '.htaccess' is always protected implicitly.
+   */
+  protectRemote?: string[];
+  /**
+   * Glob patterns: a file matching one of these whose remote size equals the
+   * local size is considered unchanged and skipped. Safe for content-hashed
+   * paths ('_next/static/**', 'assets/*.<hash>.js') — repeat deploys upload
+   * only what actually changed.
+   */
+  skipUnchanged?: string[];
+  /** Parallel connections for the transfer (1–8, default 4 for ftp/ftps, 2 for sftp). */
+  connections?: number;
 }
 
 export interface ResolvedUpload {
@@ -36,6 +57,10 @@ export interface ResolvedUpload {
   items: string[];
   exclude: string[];
   onExists?: 'overwrite' | 'skip';
+  mode?: 'upload' | 'mirror';
+  protectRemote?: string[];
+  skipUnchanged?: string[];
+  connections?: number;
 }
 
 export interface UploadGroup {
