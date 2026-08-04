@@ -37,6 +37,16 @@
         "command": "commandsExtension.uploadFile",
         "title": "Commands Extension: Upload to Server",
         "category": "Commands"
+      },
+      {
+        "command": "commandsExtension.quickUploadFiles",
+        "title": "Commands Extension: Quick Upload (files/folder to server path)",
+        "category": "Commands"
+      },
+      {
+        "command": "commandsExtension.quickUploadFromSpec",
+        "title": "Commands Extension: Quick Upload from Spec",
+        "category": "Commands"
       }
     ],
     "menus": {
@@ -109,7 +119,8 @@
     "package": "rm -f commands-extension-*.vsix && npm run compile && vsce package --allow-missing-repository",
     "install-local": "npm run package && code --install-extension commands-extension-*.vsix",
     "update": "git add -A && (git diff --cached --quiet || git commit -m 'pre-release changes') && npm version patch && git push && git push --tags && npm run package && (xdg-open https://marketplace.visualstudio.com/manage || open https://marketplace.visualstudio.com/manage || start https://marketplace.visualstudio.com/manage)",
-    "test-ext": "npm run compile && code --extensionDevelopmentPath=\"$PWD\""
+    "test-ext": "npm run compile && code --extensionDevelopmentPath=\"$PWD\"",
+    "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -3,7 +3,7 @@ import * as http from 'http';
 import * as vscode from 'vscode';
 import * as ftp from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
-import { ResolvedUpload, UploadProgress, UploadStatus } from './uploadsTypes';
+import { ResolvedUpload, UploadProgress, UploadStatus, ServerDefinition } from './uploadsTypes';
 import { resolveItems, ResolvedItem } from './uploadsProvider';
 
 /**
@@ -110,6 +110,17 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
   return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+/** Уникальные директории (rel, posix) заливаемых файлов — для точечного скана. */
+function dirsOf(items: ResolvedItem[]): string[] {
+  const dirs = new Set<string>();
+  for (const it of items) {
+    const rel = normalizeRel(it.relativeFromBase);
+    const i = rel.lastIndexOf('/');
+    dirs.add(i <= 0 ? '' : rel.substring(0, i));
+  }
+  return Array.from(dirs);
 }
 
 /** Отбрасывает из заливки файлы, чей размер на сервере совпал (skipUnchanged-глобы). */
@@ -269,18 +280,39 @@ export class UploadRunner {
     try {
       clients.push(await openClient());
 
-      // Пре-скан сервера: нужен и для skipUnchanged, и для mirror-очистки
+      // Пре-скан сервера: нужен и для skipUnchanged, и для mirror-очистки.
+      // Пул открываем ДО скана — обход дерева тоже параллелится по соединениям,
+      // иначе тысячи LIST-запросов идут в одно соединение и упираются в latency.
       let preScan: RemoteEntry[] | null = null;
       if (mirror || skipGlobs.length > 0) {
-        emit({ status: 'running', message: 'Сканирую сервер…' });
-        preScan = await this._scanFtp(clients[0], base, signal, (n) =>
-          emit({ status: 'running', message: `Сканирую сервер… ${n} файлов` })
+        emit({ status: 'running', message: 'Scanning server…' });
+
+        const scanPool = Math.min(connections, Math.max(1, items.length));
+        await Promise.all(
+          Array.from({ length: Math.max(0, scanPool - clients.length) }, async () => {
+            if (signal.aborted) return;
+            clients.push(await openClient());
+          })
         );
+
+        if (mirror) {
+          // Полное зеркало: нужно знать всё, что лежит на сервере, — иначе
+          // не понять, что удалять
+          preScan = await this._scanFtp(clients, base, signal, (n) =>
+            emit({ status: 'running', message: `Scanning server… ${n} files` })
+          );
+        } else {
+          // Только skipUnchanged: размеры нужны лишь для заливаемых файлов.
+          // Обходим не всё дерево, а только директории, где они лежат.
+          preScan = await this._scanFtpDirs(clients, base, dirsOf(items), signal, (n) =>
+            emit({ status: 'running', message: `Scanning server… ${n} files` })
+          );
+        }
       }
 
       const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs);
 
-      // Дополнительные соединения — только если есть что заливать параллельно
+      // Соединения уже открыты под скан; добираем, если их не хватает
       const poolSize = Math.min(connections, Math.max(1, toUpload.length));
       while (clients.length < poolSize) {
         if (signal.aborted) throw new Error('Cancelled');
@@ -290,8 +322,10 @@ export class UploadRunner {
       const totalBytes = toUpload.reduce((sum, it) => sum + safeSize(it.absolutePath), 0);
       const filesTotal = toUpload.length;
       const startedAt = Date.now();
-      // Побайтовый прогресс: у каждого соединения свой накопитель trackProgress
-      const clientBytes = new Array<number>(poolSize).fill(0);
+      // Побайтовый прогресс: у каждого соединения свой накопитель trackProgress.
+      // Длина — по числу клиентов (их может быть больше poolSize: пул открывался
+      // под скан), иначе индексы за границей массива и прогресс висит на 0%.
+      const clientBytes = new Array<number>(clients.length).fill(0);
       let filesDone = 0;
       let nextIndex = 0;
       let lastEmit = 0;
@@ -303,14 +337,20 @@ export class UploadRunner {
         lastEmit = now;
         const transferred = clientBytes.reduce((a, b) => a + b, 0);
         const elapsed = Math.max(1, (now - startedAt) / 1000);
+        // Процент — по завершённым файлам, а не по байтам: на тысячах мелких
+        // файлов trackProgress почти не срабатывает (передача укладывается в один
+        // буфер), transferred остаётся 0 и прогресс висит на нуле. Байты берём как
+        // уточнение внутри текущих файлов, если они всё-таки набежали.
+        const byFiles = filesTotal > 0 ? (filesDone / filesTotal) * 100 : 0;
+        const byBytes = totalBytes > 0 ? (transferred / totalBytes) * 100 : 0;
         emit({
           status: 'running',
           currentFile: currentName,
-          bytes: transferred,
+          bytes: Math.max(transferred, 0),
           bytesTotal: totalBytes,
           filesDone,
           filesTotal,
-          percent: totalBytes > 0 ? Math.min(100, (transferred / totalBytes) * 100) : undefined,
+          percent: Math.min(100, Math.max(byFiles, byBytes)),
           speedBps: transferred / elapsed,
         });
       };
@@ -368,7 +408,7 @@ export class UploadRunner {
 
       let deleted = 0;
       if (mirror && preScan && !signal.aborted) {
-        emit({ status: 'running', message: 'Mirror: удаляю устаревшее…', percent: 100 });
+        emit({ status: 'running', message: 'Mirror: removing stale files…', percent: 100 });
         deleted = await this._mirrorDelete(
           preScan,
           items,
@@ -401,39 +441,111 @@ export class UploadRunner {
     }
   }
 
+  /**
+   * Точечный скан: листает ТОЛЬКО перечисленные директории, без рекурсии.
+   * Для skipUnchanged при частичной заливке нужны размеры лишь тех файлов,
+   * что мы собираемся заливать — обходить всё дерево сервера незачем.
+   */
+  private async _scanFtpDirs(
+    clients: ftp.Client[],
+    base: string,
+    dirs: string[],
+    signal: AbortSignal,
+    onProgress?: (found: number) => void
+  ): Promise<RemoteEntry[]> {
+    const entries: RemoteEntry[] = [];
+    const queue = [...dirs];
+    let lastReport = 0;
+
+    const worker = async (client: ftp.Client): Promise<void> => {
+      for (;;) {
+        if (signal.aborted) throw new Error('Cancelled');
+        const relDir = queue.shift();
+        if (relDir === undefined) return;
+        try {
+          const list = await client.list(relDir ? `${base}/${relDir}` : base);
+          for (const fi of list) {
+            if (!fi.isFile) continue;
+            const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
+            entries.push({ rel, isDir: false, size: fi.size });
+          }
+          const now = Date.now();
+          if (onProgress && now - lastReport > 300) {
+            lastReport = now;
+            onProgress(entries.length);
+          }
+        } catch {
+          // Директории может не быть на сервере — значит файлы новые, зальём
+        }
+      }
+    };
+
+    await Promise.all(clients.map((c) => worker(c)));
+    return entries;
+  }
+
+  /**
+   * Обход дерева на сервере. Каждая директория — отдельный round-trip LIST,
+   * поэтому на больших деревьях (тысячи файлов) последовательный обход упирается
+   * в задержку сети. Раскладываем директории по всем соединениям пула: worker'ы
+   * тянут задачи из общей очереди, найденные поддиректории кладут туда же.
+   */
   private async _scanFtp(
-    client: ftp.Client,
+    clients: ftp.Client[],
     base: string,
     signal: AbortSignal,
     onProgress?: (found: number) => void
   ): Promise<RemoteEntry[]> {
     const entries: RemoteEntry[] = [];
+    const queue: string[] = [''];
+    let active = 0;
     let lastReport = 0;
-    const walk = async (relDir: string): Promise<void> => {
-      if (signal.aborted) throw new Error('Cancelled');
-      let list: ftp.FileInfo[];
-      try {
-        list = await client.list(relDir ? `${base}/${relDir}` : base);
-      } catch {
-        return;
-      }
-      for (const fi of list) {
-        if (fi.name === '.' || fi.name === '..') continue;
-        const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
-        if (fi.isDirectory) {
-          entries.push({ rel, isDir: true, size: 0 });
-          await walk(rel);
-        } else if (fi.isFile) {
-          entries.push({ rel, isDir: false, size: fi.size });
-        }
-      }
+
+    const report = () => {
       const now = Date.now();
-      if (onProgress && now - lastReport > 500) {
+      if (onProgress && now - lastReport > 300) {
         lastReport = now;
         onProgress(entries.length);
       }
     };
-    await walk('');
+
+    const worker = async (client: ftp.Client): Promise<void> => {
+      for (;;) {
+        if (signal.aborted) throw new Error('Cancelled');
+        const relDir = queue.shift();
+        if (relDir === undefined) {
+          // Очередь пуста. Если никто больше не работает — новых директорий не
+          // появится, выходим. Иначе ждём: сосед может положить поддиректории.
+          if (active === 0) return;
+          await new Promise((r) => setTimeout(r, 15));
+          continue;
+        }
+
+        // Инкремент ДО await: иначе сосед увидит пустую очередь при active === 0
+        // и выйдет, хотя мы вот-вот добавим в неё поддиректории
+        active += 1;
+        try {
+          const list = await client.list(relDir ? `${base}/${relDir}` : base);
+          for (const fi of list) {
+            if (fi.name === '.' || fi.name === '..') continue;
+            const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
+            if (fi.isDirectory) {
+              entries.push({ rel, isDir: true, size: 0 });
+              queue.push(rel);
+            } else if (fi.isFile) {
+              entries.push({ rel, isDir: false, size: fi.size });
+            }
+          }
+          report();
+        } catch {
+          // Недоступная директория — не повод валить весь скан
+        } finally {
+          active -= 1;
+        }
+      }
+    };
+
+    await Promise.all(clients.map((c) => worker(c)));
     return entries;
   }
 
@@ -470,12 +582,29 @@ export class UploadRunner {
     try {
       clients.push(await openClient());
 
+      // Пул открываем ДО скана — обход дерева тоже параллелится по соединениям
       let preScan: RemoteEntry[] | null = null;
       if (mirror || skipGlobs.length > 0) {
-        emit({ status: 'running', message: 'Сканирую сервер…' });
-        preScan = await this._scanSftp(clients[0], base, signal, (n) =>
-          emit({ status: 'running', message: `Сканирую сервер… ${n} файлов` })
+        emit({ status: 'running', message: 'Scanning server…' });
+
+        const scanPool = Math.min(connections, Math.max(1, items.length));
+        await Promise.all(
+          Array.from({ length: Math.max(0, scanPool - clients.length) }, async () => {
+            if (signal.aborted) return;
+            clients.push(await openClient());
+          })
         );
+
+        if (mirror) {
+          preScan = await this._scanSftp(clients, base, signal, (n) =>
+            emit({ status: 'running', message: `Scanning server… ${n} files` })
+          );
+        } else {
+          // Только skipUnchanged — хватит директорий заливаемых файлов
+          preScan = await this._scanSftpDirs(clients, base, dirsOf(items), signal, (n) =>
+            emit({ status: 'running', message: `Scanning server… ${n} files` })
+          );
+        }
       }
 
       const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs);
@@ -503,6 +632,9 @@ export class UploadRunner {
         lastEmit = now;
         const transferred = doneBytes + inflight.reduce((a, b) => a + b, 0);
         const elapsed = Math.max(1, (now - startedAt) / 1000);
+        // Как и в FTP: процент по файлам — надёжнее байтового на мелких файлах
+        const byFiles = filesTotal > 0 ? (filesDone / filesTotal) * 100 : 0;
+        const byBytes = totalBytes > 0 ? (transferred / totalBytes) * 100 : 0;
         emit({
           status: 'running',
           currentFile: currentName,
@@ -510,7 +642,7 @@ export class UploadRunner {
           bytesTotal: totalBytes,
           filesDone,
           filesTotal,
-          percent: totalBytes > 0 ? Math.min(100, (transferred / totalBytes) * 100) : undefined,
+          percent: Math.min(100, Math.max(byFiles, byBytes)),
           speedBps: transferred / elapsed,
         });
       };
@@ -555,7 +687,7 @@ export class UploadRunner {
 
       let deleted = 0;
       if (mirror && preScan && !signal.aborted) {
-        emit({ status: 'running', message: 'Mirror: удаляю устаревшее…', percent: 100 });
+        emit({ status: 'running', message: 'Mirror: removing stale files…', percent: 100 });
         deleted = await this._mirrorDelete(
           preScan,
           items,
@@ -594,39 +726,98 @@ export class UploadRunner {
     }
   }
 
+  /** Точечный скан только заданных директорий — см. комментарий у _scanFtpDirs. */
+  private async _scanSftpDirs(
+    clients: SftpClient[],
+    base: string,
+    dirs: string[],
+    signal: AbortSignal,
+    onProgress?: (found: number) => void
+  ): Promise<RemoteEntry[]> {
+    const entries: RemoteEntry[] = [];
+    const queue = [...dirs];
+    let lastReport = 0;
+
+    const worker = async (sftp: SftpClient): Promise<void> => {
+      for (;;) {
+        if (signal.aborted) throw new Error('Cancelled');
+        const relDir = queue.shift();
+        if (relDir === undefined) return;
+        try {
+          const list = await sftp.list(relDir ? `${base}/${relDir}` : base);
+          for (const fi of list) {
+            if (fi.type !== '-') continue;
+            const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
+            entries.push({ rel, isDir: false, size: fi.size });
+          }
+          const now = Date.now();
+          if (onProgress && now - lastReport > 300) {
+            lastReport = now;
+            onProgress(entries.length);
+          }
+        } catch {
+          // Директории может не быть — значит файлы новые
+        }
+      }
+    };
+
+    await Promise.all(clients.map((c) => worker(c)));
+    return entries;
+  }
+
+  /** Параллельный обход дерева по пулу соединений — см. комментарий у _scanFtp. */
   private async _scanSftp(
-    sftp: SftpClient,
+    clients: SftpClient[],
     base: string,
     signal: AbortSignal,
     onProgress?: (found: number) => void
   ): Promise<RemoteEntry[]> {
     const entries: RemoteEntry[] = [];
+    const queue: string[] = [''];
+    let active = 0;
     let lastReport = 0;
-    const walk = async (relDir: string): Promise<void> => {
-      if (signal.aborted) throw new Error('Cancelled');
-      let list: Awaited<ReturnType<SftpClient['list']>>;
-      try {
-        list = await sftp.list(relDir ? `${base}/${relDir}` : base);
-      } catch {
-        return;
-      }
-      for (const fi of list) {
-        if (fi.name === '.' || fi.name === '..') continue;
-        const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
-        if (fi.type === 'd') {
-          entries.push({ rel, isDir: true, size: 0 });
-          await walk(rel);
-        } else if (fi.type === '-') {
-          entries.push({ rel, isDir: false, size: fi.size });
-        }
-      }
+
+    const report = () => {
       const now = Date.now();
-      if (onProgress && now - lastReport > 500) {
+      if (onProgress && now - lastReport > 300) {
         lastReport = now;
         onProgress(entries.length);
       }
     };
-    await walk('');
+
+    const worker = async (sftp: SftpClient): Promise<void> => {
+      for (;;) {
+        if (signal.aborted) throw new Error('Cancelled');
+        const relDir = queue.shift();
+        if (relDir === undefined) {
+          if (active === 0) return;
+          await new Promise((r) => setTimeout(r, 15));
+          continue;
+        }
+
+        active += 1;
+        try {
+          const list = await sftp.list(relDir ? `${base}/${relDir}` : base);
+          for (const fi of list) {
+            if (fi.name === '.' || fi.name === '..') continue;
+            const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
+            if (fi.type === 'd') {
+              entries.push({ rel, isDir: true, size: 0 });
+              queue.push(rel);
+            } else if (fi.type === '-') {
+              entries.push({ rel, isDir: false, size: fi.size });
+            }
+          }
+          report();
+        } catch {
+          // Недоступная директория — не повод валить весь скан
+        } finally {
+          active -= 1;
+        }
+      }
+    };
+
+    await Promise.all(clients.map((c) => worker(c)));
     return entries;
   }
 
@@ -653,7 +844,7 @@ export class UploadRunner {
         await removeFile(e.rel);
         deleted += 1;
         if (deleted % 20 === 0) {
-          emit({ status: 'running', message: `Mirror: удалено ${deleted}…`, percent: 100 });
+          emit({ status: 'running', message: `Mirror: removed ${deleted}…`, percent: 100 });
         }
       } catch {
         /* оставляем — не смогли удалить */
@@ -673,4 +864,195 @@ export class UploadRunner {
     }
     return deleted;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quick upload: разовая заливка файлов/папки в произвольную директорию сервера,
+// без конфига server-uploads.local.json (для нетрекаемых файлов — логотипы,
+// иконки составных частей и т.п.). + навигация по директориям сервера.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface QuickFile {
+  /** Абсолютный локальный путь. */
+  localAbs: string;
+  /** Относительный путь на сервере от remoteDir (posix). Для одиночных файлов = имя файла. */
+  remoteRel: string;
+}
+
+export interface RemoteListEntry {
+  name: string;
+  isDir: boolean;
+  size?: number;
+}
+
+function serverPort(s: ServerDefinition): number {
+  return s.port ?? (s.protocol === 'sftp' ? 22 : 21);
+}
+
+/** Листинг одной удалённой директории (для навигации, как в FileZilla). */
+export async function listRemoteDir(
+  server: ServerDefinition,
+  dir: string
+): Promise<RemoteListEntry[]> {
+  const port = serverPort(server);
+  const path = dir && dir !== '' ? dir : '/';
+
+  if (server.protocol === 'sftp') {
+    const c = new SftpClient();
+    try {
+      await c.connect({
+        host: server.host,
+        port,
+        username: server.user,
+        password: server.password,
+        readyTimeout: 30_000,
+      });
+      const list = await c.list(path);
+      return list
+        .filter((e) => e.name !== '.' && e.name !== '..')
+        .map((e) => ({ name: e.name, isDir: e.type === 'd', size: e.size }));
+    } finally {
+      await c.end().catch(() => undefined);
+    }
+  }
+
+  const c = new ftp.Client(30_000);
+  c.ftp.verbose = false;
+  try {
+    await c.access({
+      host: server.host,
+      port,
+      user: server.user,
+      password: server.password,
+      secure: server.protocol === 'ftps',
+    });
+    const list = await c.list(path);
+    return list
+      .filter((e) => e.name !== '.' && e.name !== '..')
+      .map((e) => ({ name: e.name, isDir: e.isDirectory, size: e.size }));
+  } finally {
+    c.close();
+  }
+}
+
+/** Создать директорию на сервере (рекурсивно). */
+export async function remoteMkdir(server: ServerDefinition, dir: string): Promise<void> {
+  const port = serverPort(server);
+  if (server.protocol === 'sftp') {
+    const c = new SftpClient();
+    try {
+      await c.connect({ host: server.host, port, username: server.user, password: server.password, readyTimeout: 30_000 });
+      await c.mkdir(dir, true);
+    } finally {
+      await c.end().catch(() => undefined);
+    }
+    return;
+  }
+  const c = new ftp.Client(30_000);
+  c.ftp.verbose = false;
+  try {
+    await c.access({ host: server.host, port, user: server.user, password: server.password, secure: server.protocol === 'ftps' });
+    await c.ensureDir(dir);
+  } finally {
+    c.close();
+  }
+}
+
+/**
+ * Разовая заливка списка файлов в remoteDir. Каждый файл ложится в
+ * `remoteDir/<remoteRel>`; недостающие директории создаются. Прогресс — по
+ * завершённым файлам. Возвращает число залитых файлов.
+ */
+export async function uploadFilesTo(
+  server: ServerDefinition,
+  files: QuickFile[],
+  remoteDir: string,
+  onProgress?: ProgressCallback,
+  signal?: AbortSignal
+): Promise<number> {
+  const port = serverPort(server);
+  const total = files.length;
+  const totalBytes = files.reduce((s, f) => s + safeSize(f.localAbs), 0);
+  let done = 0;
+  let doneBytes = 0;
+  const startedAt = Date.now();
+
+  const emit = (p: Partial<UploadProgress> & { status: UploadStatus }) => {
+    if (!onProgress) return;
+    onProgress({
+      uploadKey: '__quick__',
+      bytesTotal: totalBytes,
+      filesTotal: total,
+      ...p,
+    });
+  };
+
+  const progress = (currentFile?: string) => {
+    const elapsed = Math.max((Date.now() - startedAt) / 1000, 0.001);
+    emit({
+      status: 'running',
+      currentFile,
+      filesDone: done,
+      bytes: doneBytes,
+      percent: total > 0 ? (done / total) * 100 : 0,
+      speedBps: doneBytes / elapsed,
+    });
+  };
+
+  emit({ status: 'connecting', message: `Connecting to ${server.host}…` });
+
+  if (server.protocol === 'sftp') {
+    const c = new SftpClient();
+    const onAbort = () => { c.end().catch(() => undefined); };
+    signal?.addEventListener('abort', onAbort);
+    try {
+      await c.connect({ host: server.host, port, username: server.user, password: server.password, readyTimeout: 30_000 });
+      const ensured = new Set<string>();
+      for (const f of files) {
+        if (signal?.aborted) throw new Error('Cancelled');
+        const remotePath = joinRemote(remoteDir, f.remoteRel);
+        const parent = posixDirname(remotePath);
+        if (parent && !ensured.has(parent)) {
+          await c.mkdir(parent, true).catch(() => undefined);
+          ensured.add(parent);
+        }
+        await c.fastPut(f.localAbs, remotePath);
+        done += 1;
+        doneBytes += safeSize(f.localAbs);
+        progress(f.remoteRel);
+      }
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+      await c.end().catch(() => undefined);
+    }
+  } else {
+    const c = new ftp.Client(30_000);
+    c.ftp.verbose = false;
+    const onAbort = () => c.close();
+    signal?.addEventListener('abort', onAbort);
+    try {
+      await c.access({ host: server.host, port, user: server.user, password: server.password, secure: server.protocol === 'ftps' });
+      const ensured = new Set<string>();
+      for (const f of files) {
+        if (signal?.aborted) throw new Error('Cancelled');
+        const remotePath = joinRemote(remoteDir, f.remoteRel);
+        const parent = posixDirname(remotePath);
+        if (parent && parent !== '/' && parent !== '.' && !ensured.has(parent)) {
+          await c.ensureDir(parent).catch(() => undefined);
+          await c.cd('/').catch(() => undefined);
+          ensured.add(parent);
+        }
+        await c.uploadFrom(f.localAbs, remotePath);
+        done += 1;
+        doneBytes += safeSize(f.localAbs);
+        progress(f.remoteRel);
+      }
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+      c.close();
+    }
+  }
+
+  emit({ status: 'done', filesDone: done, filesTotal: total, percent: 100, message: `Uploaded ${done} file${done === 1 ? '' : 's'}` });
+  return done;
 }

@@ -155,6 +155,56 @@ Right-click an upload for context menu actions: edit config, add files.
 
 > **Proxy / VPN note:** uploads use raw TCP sockets; HTTP proxy settings (system or VS Code) are not applied. System-level VPN tunnels are honored transparently by the OS — bypassing them requires VPN-level split tunneling.
 
+### Quick Upload (untracked files → any server path)
+
+For one-off uploads of files that are **not** part of any configured upload (logos,
+icons, assets) into an **arbitrary** server directory — without editing
+`server-uploads.local.json`.
+
+**Header buttons** (Server Uploads section, appear on hover):
+
+- **⬆ Quick upload** — pick files (multi-select) **or** a whole folder → pick a
+  server (auto if only one) → browse the server's directories (FileZilla-style:
+  enter folders, `..` up, "Upload here", create new folder) or type the path
+  manually → uploaded. Folders keep their structure; single files land as
+  `remoteDir/<basename>`.
+- **✓ Mark all as synced** — mark every tracked upload as synced (clears
+  changed/new badges) without actually uploading anything.
+
+**Servers** are read from `server-uploads.local.json` (`servers[]` — same list
+used by regular uploads).
+
+#### Upload spec format (for humans and agents)
+
+There is a non-interactive command **`Commands Extension: Quick Upload from Spec`**
+that accepts a spec string, so an agent can generate a ready-to-run line and the
+user just pastes it. One pair per line:
+
+```
+<local file or folder>  =>  <serverName>:<remoteDir>
+```
+
+- **left** — absolute local path to a file or a folder (folder = recursive, keeps structure).
+- **`serverName`** — must match a `name` in `servers[]` of `server-uploads.local.json`.
+- **right of `:`** — target directory on the server.
+- Multiple pairs: separate by newline **or** `;` (the interactive input box is single-line, so use `;` when pasting several pairs there). Lines starting with `#` are ignored.
+
+Example:
+
+```
+/home/pavel/DEV/propress.ru/wp-content/themes/pro/img/logo-09-08.webm => dev-propress:/wp-content/themes/pro/img
+/home/pavel/Downloads/составные-части-иконки => dev-propress:/wp-content/themes/pro/img/constructor/parts
+```
+
+Run via Command Palette → "Quick Upload from Spec" (or programmatically:
+`commandsExtension.quickUploadFromSpec` with the spec string as the argument).
+
+> **For agents:** to hand the user a paste-ready upload, output a fenced block in
+> exactly the `local => serverName:/remote/dir` format above. Resolve `serverName`
+> from the project's `server-uploads.local.json` `servers[]` (e.g. `dev-propress`,
+> `propress`). Left side is a local file/folder path; right side is the server
+> directory. Do not invent server names.
+
 ### Marketplace Templates
 
 The built-in **Recommended** section offers ready-made command sets:

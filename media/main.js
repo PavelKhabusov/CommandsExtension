@@ -1282,6 +1282,30 @@
 		});
 		header.appendChild(editBtn);
 
+		// Quick upload: залить нетрекаемые файлы/папку в произвольную директорию сервера.
+		const quickBtn = document.createElement('button');
+		quickBtn.className = 'uploads-edit-btn';
+		quickBtn.title = 'Quick upload files/folder to a server path';
+		quickBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M8 10.5V3.5M8 3.5L5.5 6M8 3.5L10.5 6"/><path d="M2.5 10.5v1.5a.5.5 0 0 0 .5.5h10a.5.5 0 0 0 .5-.5v-1.5"/></svg>';
+		quickBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({ type: 'quickUploadFiles' });
+		});
+		header.appendChild(quickBtn);
+
+		// Mark all as synced: сбросить индикацию изменённых/новых у всех uploads.
+		if (totalCount > 0) {
+			const syncBtn = document.createElement('button');
+			syncBtn.className = 'uploads-edit-btn';
+			syncBtn.title = 'Mark all uploads as synced';
+			syncBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M2.5 8.5l3 3 8-8"/></svg>';
+			syncBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				vscode.postMessage({ type: 'markAllUploadsSynced' });
+			});
+			header.appendChild(syncBtn);
+		}
+
 		if (totalCount > 0) {
 			const badge = document.createElement('span');
 			badge.className = 'uploads-count';

@@ -5,8 +5,8 @@ import * as vscode from 'vscode';
 import { CommandsPanel } from './webviewPanel';
 import { CommandsSidebarProvider } from './sidebarProvider';
 import { TerminalManager } from './terminalManager';
-import { UploadRunner } from './uploadRunner';
-import { UploadProgress, ResolvedUpload } from './uploadsTypes';
+import { UploadRunner, uploadFilesTo, listRemoteDir, remoteMkdir, QuickFile } from './uploadRunner';
+import { UploadProgress, ResolvedUpload, ServerDefinition } from './uploadsTypes';
 import { isPathInUploadScope, resolveItems, loadUploads, resolveServer } from './uploadsProvider';
 import { loadCommands, loadCombinedOps } from './commandsProvider';
 import { CombinedOpDefinition, CombinedOpProgress } from './combinedOpsTypes';
@@ -309,6 +309,17 @@ class UploadStalenessTracker {
 
     this._persist();
     this._emitKeys(changedKeys);
+  }
+
+  /** Пометить ВСЕ отслеживаемые uploads синхронизированными. Возвращает их число. */
+  public markAllSynced(): number {
+    const keys = new Set<string>([
+      ...this._snapshots.keys(),
+      ...this._newFiles.keys(),
+      ...this._scopes.keys(),
+    ]);
+    for (const key of keys) this.markSynced(key);
+    return keys.size;
   }
 
   public async refreshScopesFromConfig(workspaceRoot: string, configFileName: string): Promise<void> {
@@ -777,6 +788,253 @@ async function refreshServerUploadsContext(workspaceRoot: string, uploadsFile: s
  * to the exact remote locations they map to; when several uploads cover the
  * selection, the user picks a single target that covers all of them.
  */
+// ─── Quick upload: нетрекаемые файлы/папки в произвольную директорию сервера ───
+
+function quickUploadsFileName(): string {
+  return vscode.workspace.getConfiguration('commandsExtension').get<string>('uploadsFile', 'server-uploads.local.json');
+}
+
+/** Список серверов из конфига. */
+async function loadServers(): Promise<ServerDefinition[]> {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!root) return [];
+  const { servers } = await loadUploads(root, quickUploadsFileName());
+  return servers;
+}
+
+/** Выбрать сервер: авто если один, иначе QuickPick. */
+async function pickServer(servers: ServerDefinition[]): Promise<ServerDefinition | undefined> {
+  if (servers.length === 0) {
+    vscode.window.showErrorMessage(`No servers in ${quickUploadsFileName()}.`);
+    return undefined;
+  }
+  if (servers.length === 1) return servers[0];
+  const pick = await vscode.window.showQuickPick(
+    servers.map((s) => ({ label: s.name, description: `${s.user}@${s.host}`, s })),
+    { title: 'Upload to which server?' }
+  );
+  return pick?.s;
+}
+
+/** Рекурсивно собрать все файлы папки (remoteRel относительно корня папки, posix). */
+function walkFolder(rootAbs: string): QuickFile[] {
+  const out: QuickFile[] = [];
+  const walk = (dir: string, rel: string) => {
+    for (const name of fs.readdirSync(dir)) {
+      const abs = path.join(dir, name);
+      const childRel = rel ? `${rel}/${name}` : name;
+      let st: fs.Stats;
+      try { st = fs.statSync(abs); } catch { continue; }
+      if (st.isDirectory()) walk(abs, childRel);
+      else if (st.isFile()) out.push({ localAbs: abs, remoteRel: childRel });
+    }
+  };
+  walk(rootAbs, '');
+  return out;
+}
+
+/** Диалог выбора: несколько файлов ИЛИ папка. */
+/** Возвращает список файлов, спец-маркер 'spec' (пользователь выбрал ввод спеки), либо undefined (отмена). */
+async function pickLocalFiles(): Promise<QuickFile[] | 'spec' | undefined> {
+  const mode = await vscode.window.showQuickPick(
+    [
+      { label: '$(files) Files (multi-select)', value: 'files' },
+      { label: '$(folder) Whole folder', value: 'folder' },
+      { label: '$(terminal) From spec (local => server:/dir)', value: 'spec' },
+    ],
+    { title: 'What to upload?' }
+  );
+  if (!mode) return undefined;
+  if (mode.value === 'spec') return 'spec';
+
+  const defaultUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+  if (mode.value === 'folder') {
+    const picked = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, defaultUri, openLabel: 'Upload this folder' });
+    if (!picked || picked.length === 0) return undefined;
+    return walkFolder(picked[0].fsPath);
+  }
+  const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: true, defaultUri, openLabel: 'Upload these files' });
+  if (!picked || picked.length === 0) return undefined;
+  return picked.map((u) => ({ localAbs: u.fsPath, remoteRel: path.basename(u.fsPath) }));
+}
+
+/** Навигация по директориям сервера (FileZilla-style) → выбранный remote-dir. */
+async function browseRemoteDir(server: ServerDefinition, startDir: string): Promise<string | undefined> {
+  let dir = startDir || '/';
+  for (;;) {
+    let entries;
+    try {
+      entries = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Listing ${dir}…` },
+        () => listRemoteDir(server, dir)
+      );
+    } catch (e) {
+      vscode.window.showErrorMessage(`Cannot list ${dir}: ${(e as Error).message}`);
+      return undefined;
+    }
+    const dirs = entries.filter((e) => e.isDir).sort((a, b) => a.name.localeCompare(b.name));
+    type Item = vscode.QuickPickItem & { action: 'here' | 'up' | 'new' | 'manual' | 'into'; name?: string };
+    const items: Item[] = [
+      { label: `$(check) Upload here`, description: dir, action: 'here' },
+      { label: `$(new-folder) New folder…`, action: 'new' },
+      { label: `$(edit) Enter path manually…`, action: 'manual' },
+    ];
+    if (dir !== '/' && dir !== '') items.push({ label: `$(arrow-up) ..`, action: 'up' });
+    for (const d of dirs) items.push({ label: `$(folder) ${d.name}`, action: 'into', name: d.name });
+
+    const pick = await vscode.window.showQuickPick(items, { title: `Remote: ${dir}` });
+    if (!pick) return undefined;
+    if (pick.action === 'here') return dir;
+    if (pick.action === 'up') { dir = posixParent(dir); continue; }
+    if (pick.action === 'into') { dir = joinPosix(dir, pick.name!); continue; }
+    if (pick.action === 'manual') {
+      const manual = await vscode.window.showInputBox({ title: 'Remote directory', value: dir });
+      return manual?.trim() || undefined;
+    }
+    if (pick.action === 'new') {
+      const name = await vscode.window.showInputBox({ title: 'New folder name' });
+      if (!name) continue;
+      const target = joinPosix(dir, name.trim());
+      try {
+        await remoteMkdir(server, target);
+        dir = target;
+      } catch (e) {
+        vscode.window.showErrorMessage(`mkdir failed: ${(e as Error).message}`);
+      }
+      continue;
+    }
+  }
+}
+
+function posixParent(p: string): string {
+  const t = p.replace(/\/+$/, '');
+  const i = t.lastIndexOf('/');
+  return i <= 0 ? '/' : t.substring(0, i);
+}
+function joinPosix(a: string, b: string): string {
+  return (a.replace(/\/+$/, '') || '') + '/' + b.replace(/^\/+/, '');
+}
+
+/** Обёртка заливки в withProgress-нотификацию с отменой. */
+async function runQuickUpload(server: ServerDefinition, files: QuickFile[], remoteDir: string): Promise<void> {
+  if (files.length === 0) { vscode.window.showWarningMessage('No files to upload.'); return; }
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Uploading ${files.length} file(s) → ${server.name}:${remoteDir}`, cancellable: true },
+    async (progress, token) => {
+      const ac = new AbortController();
+      token.onCancellationRequested(() => ac.abort());
+      try {
+        await uploadFilesTo(server, files, remoteDir, (p) => {
+          if (p.status === 'running') {
+            const pct = typeof p.percent === 'number' ? `${Math.round(p.percent)}%` : '';
+            const df = typeof p.filesDone === 'number' ? ` (${p.filesDone}/${p.filesTotal})` : '';
+            progress.report({ message: `${pct}${df}${p.currentFile ? ' · ' + p.currentFile : ''}`.trim() });
+          } else if (p.message) {
+            progress.report({ message: p.message });
+          }
+        }, ac.signal);
+        vscode.window.showInformationMessage(`Uploaded ${files.length} file(s) to ${server.name}:${remoteDir}`);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Quick upload failed: ${(e as Error).message}`);
+      }
+    }
+  );
+}
+
+/** Полный интерактивный поток быстрой заливки. */
+async function quickUploadFiles(): Promise<void> {
+  const files = await pickLocalFiles();
+  if (!files) return;
+  if (files === 'spec') { await quickUploadFromSpec(); return; }
+  const server = await pickServer(await loadServers());
+  if (!server) return;
+  const remoteDir = await browseRemoteDir(server, '/');
+  if (!remoteDir) return;
+  await runQuickUpload(server, files, remoteDir);
+}
+
+/**
+ * Заливка по спеке (генерируется агентом, вставляется пользователем).
+ * Формат, одна пара на строку:  <локальный путь файл/папка>  =>  <сервер>:<remote-dir>
+ */
+interface SpecPair {
+  raw: string;
+  localPath?: string;
+  serverName?: string;
+  remoteDir?: string;
+  error?: string;
+}
+
+/** Разобрать спеку в пары (по переводу строки или ';'). Валидация — по списку серверов. */
+function parseSpec(text: string, serverNames: Set<string>): SpecPair[] {
+  return text
+    .split(/[\n;]+/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'))
+    .map((raw): SpecPair => {
+      const m = raw.match(/^(.+?)\s*=>\s*([^:]+):(.+)$/);
+      if (!m) return { raw, error: 'format: local => server:/dir' };
+      const localPath = m[1].trim();
+      const serverName = m[2].trim();
+      const remoteDir = m[3].trim();
+      if (serverNames.size && !serverNames.has(serverName)) {
+        return { raw, localPath, serverName, remoteDir, error: `unknown server "${serverName}"` };
+      }
+      return { raw, localPath, serverName, remoteDir };
+    });
+}
+
+async function quickUploadFromSpec(spec?: string): Promise<void> {
+  const servers = await loadServers();
+  const serverNames = new Set(servers.map((s) => s.name));
+
+  let text = spec;
+  if (!text) {
+    text = await vscode.window.showInputBox({
+      title: 'Upload spec',
+      prompt: `local => server:/dir  ·  several pairs separated by ";"  ·  servers: ${[...serverNames].join(', ') || '—'}`,
+      placeHolder: '/path/a.php => propress:/wp/inc ; /path/b.webm => propress:/wp/img',
+      // Живой предпросмотр парсинга: сколько пар распознано и куда льётся.
+      validateInput: (value) => {
+        const t = value.trim();
+        if (!t) return undefined;
+        const pairs = parseSpec(t, serverNames);
+        if (pairs.length === 0) return undefined;
+        const bad = pairs.find((p) => p.error);
+        if (bad) {
+          return { message: `✗ ${bad.raw} — ${bad.error}`, severity: vscode.InputBoxValidationSeverity.Error };
+        }
+        const preview = pairs
+          .map((p) => `${path.basename(p.localPath!)} → ${p.serverName}:${p.remoteDir}`)
+          .join('   |   ');
+        return { message: `✓ ${pairs.length} pair(s): ${preview}`, severity: vscode.InputBoxValidationSeverity.Info };
+      },
+    });
+  }
+  if (!text) return;
+
+  const lines = text.split(/[\n;]+/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  for (const line of lines) {
+    const m = line.match(/^(.+?)\s*=>\s*([^:]+):(.+)$/);
+    if (!m) { vscode.window.showErrorMessage(`Bad spec line: ${line}`); continue; }
+    const localPath = m[1].trim();
+    const serverName = m[2].trim();
+    const remoteDir = m[3].trim();
+    const server = servers.find((s) => s.name === serverName);
+    if (!server) { vscode.window.showErrorMessage(`Unknown server: ${serverName}`); continue; }
+    let files: QuickFile[];
+    try {
+      const st = fs.statSync(localPath);
+      files = st.isDirectory()
+        ? walkFolder(localPath)
+        : [{ localAbs: localPath, remoteRel: path.basename(localPath) }];
+    } catch {
+      vscode.window.showErrorMessage(`Local path not found: ${localPath}`); continue;
+    }
+    await runQuickUpload(server, files, remoteDir);
+  }
+}
+
 async function uploadFilesToServer(resource?: vscode.Uri, resources?: vscode.Uri[]): Promise<void> {
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspaceRoot) {
@@ -1073,6 +1331,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
   context.subscriptions.push(uploadFileCommand);
+
+  const quickUploadCommand = vscode.commands.registerCommand(
+    'commandsExtension.quickUploadFiles',
+    () => { void quickUploadFiles(); }
+  );
+  context.subscriptions.push(quickUploadCommand);
+
+  const quickUploadSpecCommand = vscode.commands.registerCommand(
+    'commandsExtension.quickUploadFromSpec',
+    (spec?: string) => { void quickUploadFromSpec(spec); }
+  );
+  context.subscriptions.push(quickUploadSpecCommand);
 
   const sidebarProvider = new CommandsSidebarProvider(context.extensionUri, context);
   const sidebarRegistration = vscode.window.registerWebviewViewProvider(

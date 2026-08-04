@@ -311,6 +311,15 @@ export class WebviewMessageHandler {
 				if (message.uploadKey) uploadStalenessTracker?.markSynced(message.uploadKey as string);
 				break;
 			}
+			case 'markAllUploadsSynced': {
+				const n = uploadStalenessTracker?.markAllSynced() ?? 0;
+				vscode.window.showInformationMessage(`Marked ${n} upload${n === 1 ? '' : 's'} as synced.`);
+				break;
+			}
+			case 'quickUploadFiles': {
+				void vscode.commands.executeCommand('commandsExtension.quickUploadFiles');
+				break;
+			}
 			case 'runAutoUpload': {
 				const uploadKeys = message.uploadKeys as string[];
 				if (!uploadKeys?.length || !uploadRunner) return;
