@@ -1338,14 +1338,8 @@
 			body.appendChild(empty);
 		} else {
 			const nonEmptyGroups = lastUploadGroups.filter((g) => g.uploads && g.uploads.length > 0);
-			const showGroupHeads = nonEmptyGroups.length > 1;
 			for (const group of nonEmptyGroups) {
-				if (showGroupHeads && group.name && group.name !== 'Uploads') {
-					const subhead = document.createElement('div');
-					subhead.className = 'uploads-group-name';
-					subhead.textContent = group.name;
-					body.appendChild(subhead);
-				}
+				body.appendChild(createServerHead(group));
 				for (const u of group.uploads) {
 					body.appendChild(createUploadCard(u, group.name));
 				}
@@ -1354,10 +1348,87 @@
 
 		wrap.appendChild(header);
 		wrap.appendChild(body);
-		buildAutoUploads(body);
 		wrapper.appendChild(wrap);
 
+		applyAllUploadStatuses();
 		applyUploadsCollapseState();
+	}
+
+	// A per-group "server header": group name (left), the server login shown
+	// ONCE here instead of on every card (right), and — when the group has
+	// modified files — an "Upload N modified" action on the far right whose
+	// tooltip lists the modified files.
+	function createServerHead(group) {
+		const head = document.createElement('div');
+		head.className = 'uploads-group-head';
+
+		// A single login for the group when all its resolved uploads share one
+		// server (the normal case); otherwise leave it to per-card fallback.
+		let login = '';
+		let mixed = false;
+		for (const u of group.uploads) {
+			if (u._unresolved || !u.user || !u.host) continue;
+			const l = u.user + '@' + u.host;
+			if (!login) login = l;
+			else if (login !== l) { mixed = true; break; }
+		}
+
+		// Name on the first line, login on its own line beneath it.
+		const textCol = document.createElement('div');
+		textCol.className = 'uploads-group-text';
+
+		const name = document.createElement('span');
+		const hasName = group.name && group.name !== 'Uploads';
+		name.className = 'uploads-group-name';
+		name.textContent = hasName ? group.name : (login || group.name || 'Uploads');
+		if (!hasName && login) name.title = login;
+		textCol.appendChild(name);
+
+		if (login && hasName && !mixed) {
+			const loginEl = document.createElement('span');
+			loginEl.className = 'uploads-group-login';
+			loginEl.textContent = login;
+			loginEl.title = login;
+			textCol.appendChild(loginEl);
+		}
+
+		head.appendChild(textCol);
+
+		const auto = computeAutoUploadForGroup(group);
+		if (auto) {
+			const btn = document.createElement('button');
+			btn.className = 'uploads-group-modified';
+			const n = auto.staleFiles.size;
+			const l1 = document.createElement('span');
+			l1.className = 'uploads-group-modified-l1';
+			l1.textContent = '⚠ Upload only';
+			const l2 = document.createElement('span');
+			l2.className = 'uploads-group-modified-l2';
+			l2.textContent = n + ' modified';
+			btn.appendChild(l1);
+			btn.appendChild(l2);
+			const fileList = Array.from(auto.staleFiles).map(function(p) {
+				var parts = p.replace(/\\/g, '/').split('/');
+				return parts.length >= 2 ? parts.slice(-2).join('/') : p;
+			});
+			btn.title = 'Upload only modified files' + (fileList.length ? ':\n' + fileList.join('\n') : '');
+			btn.addEventListener('click', function(e) {
+				e.stopPropagation();
+				vscode.postMessage({ type: 'runAutoUpload', uploadKeys: auto.uploadKeys });
+			});
+			head.appendChild(btn);
+		}
+
+		return head;
+	}
+
+	// Reapply progress/stale status to every rendered card after a full
+	// re-render, so an in-flight upload or a stale badge isn't lost.
+	function applyAllUploadStatuses() {
+		const keys = new Set();
+		for (const k of uploadStatusMap.keys()) keys.add(k);
+		for (const k of uploadStalenessMap.keys()) keys.add(k);
+		for (const k of keys) updateUploadCardStatus(k);
 	}
 
 	function computeAutoUploadCmds() {
@@ -1417,65 +1488,44 @@
 		return keys;
 	}
 
-	function buildAutoUploads(body) {
-		var existing = body.querySelector('.uploads-auto-section');
-		if (existing) existing.remove();
-		const cmds = computeAutoUploadCmds();
-		if (!cmds.length) return;
-		const section = document.createElement('div');
-		section.className = 'uploads-auto-section';
-		for (const cmd of cmds) {
-			section.appendChild(createAutoUploadCard(cmd));
+	// Same greedy set-cover as computeAutoUploadCmds() but scoped to a single
+	// config group, so each server header owns its own "modified" action
+	// regardless of whether a server spans multiple groups.
+	function computeAutoUploadForGroup(group) {
+		const candidates = [];
+		for (const u of group.uploads || []) {
+			const key = uploadKeyOf(group.name, u.name);
+			const info = uploadStalenessMap.get(key);
+			if (!info || info.staleness !== 'stale' || !info.staleCount) continue;
+			candidates.push({ key, staleFiles: new Set(info.staleFiles || []), trackedCount: info.trackedCount || 0 });
 		}
-		body.appendChild(section);
+		if (!candidates.length) return null;
+
+		candidates.sort((a, b) =>
+			(b.staleFiles.size - a.staleFiles.size) || (a.trackedCount - b.trackedCount)
+		);
+		const allStale = new Set();
+		for (const c of candidates) for (const f of c.staleFiles) allStale.add(f);
+		const remaining = new Set(allStale);
+		const chosen = [];
+		for (const c of candidates) {
+			if (!remaining.size) break;
+			let covers = false;
+			for (const f of c.staleFiles) if (remaining.has(f)) { covers = true; break; }
+			if (!covers) continue;
+			chosen.push(c);
+			for (const f of c.staleFiles) remaining.delete(f);
+		}
+		if (!chosen.length) return null;
+		const staleFiles = new Set();
+		for (const c of chosen) for (const f of c.staleFiles) staleFiles.add(f);
+		return { uploadKeys: chosen.map(c => c.key), staleFiles };
 	}
 
+	// Modified uploads are now surfaced as an action in each server header
+	// (see createServerHead), so a staleness change just re-renders the panel.
 	function updateAutoUploads() {
-		const wrapper = document.getElementById('uploads-wrapper');
-		if (!wrapper) return;
-		const body = wrapper.querySelector('.uploads-body');
-		if (body) buildAutoUploads(body);
-	}
-
-	function createAutoUploadCard(cmd) {
-		const card = document.createElement('div');
-		card.className = 'upload-auto-item';
-		const fileList = Array.from(cmd.staleFiles).map(function(p) {
-			var parts = p.replace(/\\/g, '/').split('/');
-			return parts.length >= 2 ? parts.slice(-2).join('/') : p;
-		});
-		card.title = fileList.length
-			? 'Upload only modified files to ' + cmd.display + ':\n' + fileList.join('\n')
-			: 'Upload only modified files to ' + cmd.display;
-
-		const icon = document.createElement('span');
-		icon.className = 'upload-auto-icon';
-		icon.textContent = '⚠';
-		card.appendChild(icon);
-
-		const info = document.createElement('div');
-		info.className = 'upload-info';
-
-		const top = document.createElement('div');
-		top.className = 'upload-top';
-		const nameSpan = document.createElement('span');
-		nameSpan.className = 'upload-name';
-		nameSpan.textContent = 'Upload ' + cmd.staleFiles.size + ' modified file' + (cmd.staleFiles.size !== 1 ? 's' : '');
-		top.appendChild(nameSpan);
-		info.appendChild(top);
-
-		const sub = document.createElement('span');
-		sub.className = 'upload-subtitle';
-		sub.textContent = cmd.display;
-		info.appendChild(sub);
-
-		card.appendChild(info);
-
-		card.addEventListener('click', function() {
-			vscode.postMessage({ type: 'runAutoUpload', uploadKeys: cmd.uploadKeys });
-		});
-
-		return card;
+		renderUploads();
 	}
 
 	function createUploadCard(upload, groupName) {
@@ -1510,21 +1560,23 @@
 
 		info.appendChild(top);
 
-		const sub = document.createElement('span');
-		sub.className = 'upload-subtitle';
-		const account = (upload.user && upload.host)
-			? upload.user + '@' + upload.host
-			: (upload.server ? '→ server "' + upload.server + '" (not found)' : 'no server config');
-		// Prefix the server name before the account so it's clear which server
-		// this upload targets (only when the upload references a named server).
-		const where = (upload.server && upload.user && upload.host)
-			? upload.server + ' · ' + account
-			: account;
-		sub.textContent = where + ' · ' + upload.remoteDir;
-		if (upload._unresolved) {
-			sub.classList.add('upload-unresolved');
+		// No second line for resolved uploads: the login lives in the server
+		// header, and the remote path + items/excludes are shown on hover over the
+		// card name. The status line below carries progress and "⚠ N modified".
+		// Unresolved uploads still show an explicit error line.
+		if (upload._unresolved || !upload.user || !upload.host) {
+			const sub = document.createElement('span');
+			sub.className = 'upload-subtitle upload-unresolved';
+			sub.textContent = upload.server ? '→ server "' + upload.server + '" (not found)' : 'no server config';
+			info.appendChild(sub);
+		} else {
+			card.dataset.resolved = '1';
+			card.dataset.itemCount = String((upload.items || []).length);
+			const tipParts = [upload.user + '@' + upload.host + ' · ' + upload.remoteDir];
+			if (upload.items && upload.items.length) tipParts.push('Items:\n' + upload.items.join('\n'));
+			if (upload.exclude && upload.exclude.length) tipParts.push('Excluded:\n' + upload.exclude.join('\n'));
+			nameSpan.title = tipParts.join('\n\n');
 		}
-		info.appendChild(sub);
 
 		const status = document.createElement('div');
 		status.className = 'upload-status';
@@ -1567,19 +1619,6 @@
 		btnGroup.appendChild(excludeBtn);
 
 		card.appendChild(btnGroup);
-
-		const itemCount = document.createElement('span');
-		itemCount.className = 'upload-items-badge';
-		itemCount.textContent = String((upload.items || []).length);
-		const tipParts = [];
-		if (upload.items && upload.items.length) {
-			tipParts.push('Items:\n' + upload.items.join('\n'));
-		}
-		if (upload.exclude && upload.exclude.length) {
-			tipParts.push('Excluded:\n' + upload.exclude.join('\n'));
-		}
-		itemCount.title = tipParts.join('\n\n');
-		card.appendChild(itemCount);
 
 		const cancelBtn = document.createElement('button');
 		cancelBtn.className = 'upload-cancel-btn';
@@ -1759,6 +1798,22 @@
 				text.textContent = status.message || 'Cancelled';
 				statusEl.appendChild(text);
 			}
+		}
+
+		// Every resolved card keeps a second line: when nothing else is shown
+		// (idle & not stale), display how many files the upload tracks so cards
+		// don't look lopsided.
+		if (!statusEl.firstChild && card.dataset.resolved === '1') {
+			const tracked = stalenessInfo && typeof stalenessInfo.trackedCount === 'number'
+				? stalenessInfo.trackedCount
+				: Number(card.dataset.itemCount || 0);
+			const text = document.createElement('div');
+			text.className = 'upload-last';
+			text.textContent = tracked + ' file' + (tracked !== 1 ? 's' : '') + ' tracked';
+			// Same tooltip as the card name (path + items/excludes).
+			const nameEl = card.querySelector('.upload-name');
+			if (nameEl && nameEl.title) text.title = nameEl.title;
+			statusEl.appendChild(text);
 		}
 	}
 
