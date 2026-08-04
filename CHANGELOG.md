@@ -5,9 +5,21 @@ All notable changes to Commands Extension are documented here.
 ## [0.0.16] - 2026-07-10
 
 ### Added
+- **Quick Upload** (`Commands Extension: Quick Upload`, `commandsExtension.quickUploadFiles`) — send untracked files or a folder to an arbitrary server path without adding a config entry: pick files/folder, choose the target server, type the remote dir. A header button (⬆) on the Server Uploads section triggers it too.
+- **Quick Upload from Spec** (`commandsExtension.quickUploadFromSpec`) — paste a one-line spec `local-path => server:remote-dir` (several pairs separated by `;`, `#`-comments ignored) and upload straight away. The dialog shows a live parse preview (per-pair target / unknown-server / format errors) as you type, and offers a third "From spec" mode inline.
+- **Mark all synced** — header button that clears the modified/new indication across all uploads at once.
+
 - **Mirror deploys** (`"mode": "mirror"` on an upload) — after a full upload the runner walks `remoteDir`, deletes remote files that don't exist locally and prunes now-empty directories. Built for hashed-build deploys (Next.js `out/`, Vite `dist/`): stale `_next/static/<hash>` chunks from previous builds no longer pile up on the server. `protectRemote` globs (relative to `remoteDir`) mark server-side files that must never be deleted; `.htaccess` is always protected implicitly. Mirror is skipped on partial (auto/set-cover) uploads — deletion only runs when the full local state is known. The done-message reports `mirror: removed N stale`.
 - **Parallel transfers** (`"connections": N`, 1–8) — the runner opens a pool of FTP/SFTP connections and distributes the file queue between them (default 4 for ftp/ftps, 2 for sftp). Directory creation is cached per deploy instead of an `ensureDir`+`cd` round-trip per file — the old behaviour made many-small-files deploys crawl.
 - **`skipUnchanged` globs** — files matching the globs whose remote size equals the local size are skipped. Meant for content-hashed paths (`_next/static/**`): repeat deploys upload only new chunks and HTML instead of re-pushing tens of MB. The done-message reports `skipped N unchanged`.
+
+### Changed
+- **Server-grouped uploads panel** — the Server Uploads section is now grouped by server: each group shows a header with the group name and, on its own line beneath, the server login *once* (instead of repeating `user@host` on every card). The "Upload only N modified" action moved to the right of that header (with the modified-file list on hover). Upload cards dropped the inline path/login — the remote path plus items/excludes are shown on hover over the card name — and every card keeps a single consistent status line: `N files tracked` when idle, `⚠ N files modified` when stale, live progress while running, or the last result.
+- **rsync trailing-slash semantics for folder items** — a folder item now respects a trailing slash like rsync: `"folder/"` uploads the folder's *contents* into `remoteDir` (previous behaviour), while `"folder"` keeps the folder name on the server. Fixes folders being flattened to the remote root; configs relying on content-merge just add a trailing slash.
+- **English UI** — quick-upload dialogs, the spec preview, and progress phases are in English.
+
+### Fixed
+- **Glob items ignore VS Code exclude settings** — glob upload items now walk the filesystem directly instead of `workspace.findFiles`, so files inside gitignored / `files.exclude`d folders are found; paths are preserved relative to the glob's literal base.
 
 ## [0.0.15] - 2026-06-08
 
