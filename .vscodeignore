@@ -12,3 +12,7 @@ ralph-run.sh
 test-project/
 **/*.ts
 **/*.map
+server-uploads.local.json
+commands-list.json
+commands.json
+future.md
