@@ -1,7 +1,9 @@
 # Commands Extension
 
-[![Version](https://img.shields.io/badge/version-0.0.15-blue)](https://github.com/PavelKhabusov/CommandsExtension/releases)
-[![Marketplace](https://img.shields.io/visual-studio-marketplace/v/PavelKhabusov.commands-extension?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
+[![Marketplace](https://vsmarketplacebadges.dev/version/PavelKhabusov.commands-extension.svg?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
+[![Installs](https://vsmarketplacebadges.dev/installs/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
+[![Downloads](https://vsmarketplacebadges.dev/downloads/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
+[![Rating](https://vsmarketplacebadges.dev/rating-short/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension&ssr=false#review-details)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **One-click command runner for VS Code.** Define commands in JSON or let the extension pick up your `package.json` scripts and `.ps1` files automatically — then run anything from a sidebar or panel with a single click.
