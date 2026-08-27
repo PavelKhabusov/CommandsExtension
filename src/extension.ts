@@ -835,20 +835,69 @@ function walkFolder(rootAbs: string): QuickFile[] {
 
 /** Диалог выбора: несколько файлов ИЛИ папка. */
 /** Возвращает список файлов, спец-маркер 'spec' (пользователь выбрал ввод спеки), либо undefined (отмена). */
-async function pickLocalFiles(): Promise<QuickFile[] | 'spec' | undefined> {
-  const mode = await vscode.window.showQuickPick(
-    [
-      { label: '$(files) Files (multi-select)', value: 'files' },
-      { label: '$(folder) Whole folder', value: 'folder' },
-      { label: '$(terminal) From spec (local => server:/dir)', value: 'spec' },
-    ],
-    { title: 'What to upload?' }
-  );
-  if (!mode) return undefined;
-  if (mode.value === 'spec') return 'spec';
+type LocalPickItem = vscode.QuickPickItem & { action: 'files' | 'folder' | 'spec' | 'spec-inline'; specText?: string };
+
+async function pickLocalFiles(): Promise<QuickFile[] | { spec: string } | 'spec' | undefined> {
+  // Peek at the clipboard: if it already holds a valid spec, preview it on the
+  // "From spec" option so it's recognised before the spec input is opened.
+  let specDetail: string | undefined;
+  try {
+    const clip = (await vscode.env.clipboard.readText()).trim();
+    if (clip) {
+      const pairs = parseSpec(clip, new Set());
+      if (pairs.length > 0 && pairs.every((p) => !p.error)) {
+        specDetail = `✓ clipboard: ${specSummary(pairs)}`;
+      }
+    }
+  } catch { /* clipboard may be unavailable */ }
+
+  const baseItems: LocalPickItem[] = [
+    { label: '$(files) Files (multi-select)', action: 'files' },
+    { label: '$(folder) Whole folder', action: 'folder' },
+    { label: '$(terminal) From spec (local => server:/dir)', action: 'spec', detail: specDetail },
+  ];
+  if (specDetail) baseItems.unshift(baseItems.pop()!);
+
+  const qp = vscode.window.createQuickPick<LocalPickItem>();
+  qp.title = 'What to upload?';
+  qp.placeholder = 'Pick a source — or paste a spec (local => server:/dir) here to upload it';
+  qp.items = baseItems;
+
+  // Pasting a spec into the filter would otherwise match no item and hide the
+  // list. Detect it and show a single "use this spec" item instead (alwaysShow
+  // so it survives the filter) — this is the parse happening at the format step.
+  qp.onDidChangeValue((value) => {
+    const v = value.trim();
+    if (v.includes('=>')) {
+      const pairs = parseSpec(v, new Set());
+      if (pairs.length > 0 && pairs.every((p) => !p.error)) {
+        qp.items = [{
+          label: `$(terminal) Use this spec — ${specSummary(pairs)}`,
+          description: 'Enter to review & upload',
+          action: 'spec-inline',
+          specText: v,
+          alwaysShow: true,
+        }];
+        return;
+      }
+    }
+    qp.items = baseItems;
+  });
+
+  const chosen = await new Promise<LocalPickItem | undefined>((resolve) => {
+    qp.onDidAccept(() => resolve(qp.selectedItems[0]));
+    qp.onDidHide(() => resolve(undefined));
+    qp.show();
+  });
+  qp.hide();
+  qp.dispose();
+
+  if (!chosen) return undefined;
+  if (chosen.action === 'spec') return 'spec';
+  if (chosen.action === 'spec-inline') return { spec: chosen.specText || '' };
 
   const defaultUri = vscode.workspace.workspaceFolders?.[0]?.uri;
-  if (mode.value === 'folder') {
+  if (chosen.action === 'folder') {
     const picked = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, defaultUri, openLabel: 'Upload this folder' });
     if (!picked || picked.length === 0) return undefined;
     return walkFolder(picked[0].fsPath);
@@ -856,6 +905,57 @@ async function pickLocalFiles(): Promise<QuickFile[] | 'spec' | undefined> {
   const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: true, defaultUri, openLabel: 'Upload these files' });
   if (!picked || picked.length === 0) return undefined;
   return picked.map((u) => ({ localAbs: u.fsPath, remoteRel: path.basename(u.fsPath) }));
+}
+
+/**
+ * Preview grouped the way the upload actually runs: by server (one connection
+ * each), then by remote dir. The server is set apart in «…» so it stands out and
+ * isn't repeated per file.
+ *   «staging» /media ← a.js, b.css | / ← README.md   ‖   «prod» /srv/app ← x.json
+ */
+/** Concise one-line summary for QuickPick item labels/details: pairs + per-server counts. */
+function specSummary(pairs: SpecPair[]): string {
+  const counts = new Map<string, number>();
+  for (const p of pairs) if (p.serverName) counts.set(p.serverName, (counts.get(p.serverName) || 0) + 1);
+  const servers = Array.from(counts, ([s, n]) => `${s} (${n})`).join(', ');
+  return `${pairs.length} pair(s) → ${servers}`;
+}
+
+function specPreview(pairs: SpecPair[]): string {
+  const byServer = new Map<string, Map<string, string[]>>();
+  for (const p of pairs) {
+    if (!p.serverName || !p.localPath) continue;
+    const dirs = byServer.get(p.serverName) ?? new Map<string, string[]>();
+    const files = dirs.get(p.remoteDir || '/') ?? [];
+    files.push(path.basename(p.localPath));
+    dirs.set(p.remoteDir || '/', files);
+    byServer.set(p.serverName, dirs);
+  }
+  const groups: string[] = [];
+  for (const [server, dirs] of byServer) {
+    const dirParts = Array.from(dirs, ([dir, files]) => `${dir} ← ${files.join(', ')}`);
+    groups.push(`«${server}» ${dirParts.join(' | ')}`);
+  }
+  return groups.join('   ‖   ');
+}
+
+/** Grouped preview, one server per line — for the input box (which wraps/keeps newlines). */
+function specPreviewLines(pairs: SpecPair[]): string {
+  const byServer = new Map<string, Map<string, string[]>>();
+  for (const p of pairs) {
+    if (!p.serverName || !p.localPath) continue;
+    const dirs = byServer.get(p.serverName) ?? new Map<string, string[]>();
+    const files = dirs.get(p.remoteDir || '/') ?? [];
+    files.push(path.basename(p.localPath));
+    dirs.set(p.remoteDir || '/', files);
+    byServer.set(p.serverName, dirs);
+  }
+  const lines: string[] = [];
+  for (const [server, dirs] of byServer) {
+    const dirParts = Array.from(dirs, ([dir, files]) => `${dir} ← ${files.join(', ')}`);
+    lines.push(`«${server}»  ${dirParts.join('  |  ')}`);
+  }
+  return lines.join('\n');
 }
 
 /** Навигация по директориям сервера (FileZilla-style) → выбранный remote-dir. */
@@ -918,8 +1018,11 @@ function joinPosix(a: string, b: string): string {
 /** Обёртка заливки в withProgress-нотификацию с отменой. */
 async function runQuickUpload(server: ServerDefinition, files: QuickFile[], remoteDir: string): Promise<void> {
   if (files.length === 0) { vscode.window.showWarningMessage('No files to upload.'); return; }
+  // remoteDir may be empty when files carry their own absolute remote paths in
+  // remoteRel (grouped spec upload) — then the target is just the server.
+  const target = remoteDir ? `${server.name}:${remoteDir}` : server.name;
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Uploading ${files.length} file(s) → ${server.name}:${remoteDir}`, cancellable: true },
+    { location: vscode.ProgressLocation.Notification, title: `Uploading ${files.length} file(s) → ${target}`, cancellable: true },
     async (progress, token) => {
       const ac = new AbortController();
       token.onCancellationRequested(() => ac.abort());
@@ -933,7 +1036,7 @@ async function runQuickUpload(server: ServerDefinition, files: QuickFile[], remo
             progress.report({ message: p.message });
           }
         }, ac.signal);
-        vscode.window.showInformationMessage(`Uploaded ${files.length} file(s) to ${server.name}:${remoteDir}`);
+        vscode.window.showInformationMessage(`Uploaded ${files.length} file(s) to ${target}`);
       } catch (e) {
         vscode.window.showErrorMessage(`Quick upload failed: ${(e as Error).message}`);
       }
@@ -946,6 +1049,7 @@ async function quickUploadFiles(): Promise<void> {
   const files = await pickLocalFiles();
   if (!files) return;
   if (files === 'spec') { await quickUploadFromSpec(); return; }
+  if (!Array.isArray(files)) { await quickUploadFromSpec(undefined, files.spec); return; }
   const server = await pickServer(await loadServers());
   if (!server) return;
   const remoteDir = await browseRemoteDir(server, '/');
@@ -984,36 +1088,66 @@ function parseSpec(text: string, serverNames: Set<string>): SpecPair[] {
     });
 }
 
-async function quickUploadFromSpec(spec?: string): Promise<void> {
+/**
+ * @param spec    run this spec directly, skipping the input box (context-menu / programmatic).
+ * @param prefill open the input box pre-filled with this text (paste-detected in the picker),
+ *                so the grouped live preview shows and the user confirms with Enter.
+ */
+async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<void> {
   const servers = await loadServers();
   const serverNames = new Set(servers.map((s) => s.name));
 
   let text = spec;
   if (!text) {
-    text = await vscode.window.showInputBox({
-      title: 'Upload spec',
-      prompt: `local => server:/dir  ·  several pairs separated by ";"  ·  servers: ${[...serverNames].join(', ') || '—'}`,
-      placeHolder: '/path/a.php => propress:/wp/inc ; /path/b.webm => propress:/wp/img',
-      // Живой предпросмотр парсинга: сколько пар распознано и куда льётся.
-      validateInput: (value) => {
-        const t = value.trim();
-        if (!t) return undefined;
-        const pairs = parseSpec(t, serverNames);
-        if (pairs.length === 0) return undefined;
-        const bad = pairs.find((p) => p.error);
-        if (bad) {
-          return { message: `✗ ${bad.raw} — ${bad.error}`, severity: vscode.InputBoxValidationSeverity.Error };
-        }
-        const preview = pairs
-          .map((p) => `${path.basename(p.localPath!)} → ${p.serverName}:${p.remoteDir}`)
-          .join('   |   ');
-        return { message: `✓ ${pairs.length} pair(s): ${preview}`, severity: vscode.InputBoxValidationSeverity.Info };
-      },
+    // Pre-fill: prefer an explicit prefill (paste-detected), else the clipboard
+    // when it already holds a valid spec — so parsing/preview shows immediately.
+    let initial = prefill;
+    if (!initial) {
+      let clip = '';
+      try { clip = (await vscode.env.clipboard.readText()).trim(); } catch { /* clipboard unavailable */ }
+      const clipPairs = clip ? parseSpec(clip, serverNames) : [];
+      if (clipPairs.length > 0 && clipPairs.every((p) => !p.error)) initial = clip;
+    }
+    // createInputBox (not showInputBox) so the grouped preview is shown right
+    // away for a pre-filled value — showInputBox only validates on change, which
+    // is why a pasted/pre-filled spec showed no preview. The message wraps here
+    // (no hard one-line truncation like a QuickPick item detail).
+    const previewFor = (value: string): string | vscode.InputBoxValidationMessage | undefined => {
+      const t = value.trim();
+      if (!t) return undefined;
+      const pairs = parseSpec(t, serverNames);
+      if (pairs.length === 0) return undefined;
+      const bad = pairs.find((p) => p.error);
+      if (bad) return { message: `✗ ${bad.raw} — ${bad.error}`, severity: vscode.InputBoxValidationSeverity.Error };
+      const servers2 = new Set(pairs.map((p) => p.serverName)).size;
+      return {
+        message: `✓ ${pairs.length} pair(s), ${servers2} server(s):\n${specPreviewLines(pairs)}`,
+        severity: vscode.InputBoxValidationSeverity.Info,
+      };
+    };
+    const ib = vscode.window.createInputBox();
+    ib.title = 'Upload spec';
+    ib.prompt = `local => server:/dir  ·  several pairs separated by ";"  ·  servers: ${[...serverNames].join(', ') || '—'}`;
+    ib.placeholder = '/path/a.php => propress:/wp/inc ; /path/b.webm => propress:/wp/img';
+    ib.value = initial || '';
+    ib.validationMessage = previewFor(ib.value);
+    ib.onDidChangeValue((v) => { ib.validationMessage = previewFor(v); });
+    text = await new Promise<string | undefined>((resolve) => {
+      ib.onDidAccept(() => { resolve(ib.value); ib.hide(); });
+      ib.onDidHide(() => resolve(undefined));
+      ib.show();
     });
+    ib.dispose();
   }
   if (!text) return;
 
   const lines = text.split(/[\n;]+/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+
+  // Group every pair by server so all files heading to the same server go over a
+  // SINGLE connection in one run — even when their remote dirs differ. Each pair's
+  // remoteDir is folded into the file's remoteRel (a full absolute remote path),
+  // and the run is invoked with an empty remoteDir so that path is used verbatim.
+  const buckets = new Map<string, { server: ServerDefinition; files: QuickFile[] }>();
   for (const line of lines) {
     const m = line.match(/^(.+?)\s*=>\s*([^:]+):(.+)$/);
     if (!m) { vscode.window.showErrorMessage(`Bad spec line: ${line}`); continue; }
@@ -1022,16 +1156,24 @@ async function quickUploadFromSpec(spec?: string): Promise<void> {
     const remoteDir = m[3].trim();
     const server = servers.find((s) => s.name === serverName);
     if (!server) { vscode.window.showErrorMessage(`Unknown server: ${serverName}`); continue; }
-    let files: QuickFile[];
+    let pairFiles: QuickFile[];
     try {
       const st = fs.statSync(localPath);
-      files = st.isDirectory()
+      pairFiles = st.isDirectory()
         ? walkFolder(localPath)
         : [{ localAbs: localPath, remoteRel: path.basename(localPath) }];
     } catch {
       vscode.window.showErrorMessage(`Local path not found: ${localPath}`); continue;
     }
-    await runQuickUpload(server, files, remoteDir);
+    const bucket = buckets.get(serverName) || { server, files: [] };
+    for (const f of pairFiles) {
+      bucket.files.push({ localAbs: f.localAbs, remoteRel: joinPosix(remoteDir, f.remoteRel) });
+    }
+    buckets.set(serverName, bucket);
+  }
+
+  for (const { server, files } of buckets.values()) {
+    await runQuickUpload(server, files, '');
   }
 }
 
