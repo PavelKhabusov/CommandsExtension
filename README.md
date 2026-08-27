@@ -1,14 +1,24 @@
+<div align="center">
+
+<img src="media/icon.svg" width="96" alt="Commands Extension">
+
 # Commands Extension
+
+**One-click command runner for VS Code.** Define commands in JSON or let the extension pick up
+your `package.json` scripts and `.ps1` files automatically — then run anything from a sidebar or panel.
 
 [![Marketplace](https://vsmarketplacebadges.dev/version/PavelKhabusov.commands-extension.svg?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![Installs](https://vsmarketplacebadges.dev/installs/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
-[![Downloads](https://vsmarketplacebadges.dev/downloads/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![Rating](https://vsmarketplacebadges.dev/rating-short/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension&ssr=false#review-details)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![License](https://img.shields.io/badge/license-MIT-7ba7d4)
 
-**One-click command runner for VS Code.** Define commands in JSON or let the extension pick up your `package.json` scripts and `.ps1` files automatically — then run anything from a sidebar or panel with a single click.
+![VS Code](https://img.shields.io/badge/VS%20Code-extension-007ACC?logo=visualstudiocode&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-1f1f1f)
 
-> No more switching to the terminal and typing the same commands over and over.
+</div>
+
+---
 
 ---
 
