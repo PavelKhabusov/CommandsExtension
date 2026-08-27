@@ -36,6 +36,34 @@
       "type": "terminal",
       "group": "Dev",
       "cwd": "./frontend"
+    },
+    {
+      "name": "▶ Start app",
+      "command": "./start.sh",
+      "type": "terminal",
+      "group": "App",
+      "stop": "■ Stop app"
+    },
+    {
+      "name": "■ Stop app",
+      "command": "./stop.sh",
+      "type": "terminal",
+      "group": "App",
+      "hidden": true
+    },
+    {
+      "name": "Storage up",
+      "command": "docker compose up -d",
+      "type": "terminal",
+      "group": "App",
+      "stop": "Storage down"
+    },
+    {
+      "name": "Storage down",
+      "command": "docker compose down",
+      "type": "terminal",
+      "group": "App",
+      "hidden": true
     }
   ]
 }

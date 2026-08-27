@@ -280,6 +280,41 @@ Uses VS Code CSS variables — looks native in any theme (light, dark, high cont
 | `type` | `"terminal"` \| `"node"` \| `"pwsh"` | yes | Execution type |
 | `group` | string | no | Group name (default: `"General"`) |
 | `cwd` | string | no | Working directory relative to workspace root |
+| `stop` | string | no | Name of a command that stops this one (see below) |
+| `hidden` | boolean | no | Hide this command from the list (default `false`) |
+
+### Bound stop command (`stop` + `hidden`)
+
+Link a **start** command to a **stop** command by the stop command's `name`.
+While the start command is running (its terminal is open), its card shows a red
+**⏹ Stop** icon next to the ✕. Clicking it **closes the start command's terminal
+and runs the bound stop command**. Mark the stop command `"hidden": true` so it
+isn't shown as its own card (it's only reached through the Stop icon).
+
+Several start commands can share one stop command — e.g. all your "start"
+variants bound to a single "stop project" — and on/off pairs (a service "up"
+bound to its "down") toggle from one icon.
+
+```json
+{
+  "commands": [
+    { "name": "▶ Start (full)",    "command": "./start.sh",           "type": "terminal", "group": "App", "stop": "■ Stop" },
+    { "name": "▶ Start (partial)", "command": "./start-partial.sh",   "type": "terminal", "group": "App", "stop": "■ Stop" },
+    { "name": "■ Stop",            "command": "./stop.sh",            "type": "terminal", "group": "App", "hidden": true },
+
+    { "name": "Storage up",   "command": "docker compose up -d",   "type": "terminal", "group": "App", "stop": "Storage down" },
+    { "name": "Storage down", "command": "docker compose down",    "type": "terminal", "group": "App", "hidden": true }
+  ]
+}
+```
+
+> The Stop icon appears only while the command's terminal is open. Terminal-type
+> commands keep their terminal open after running (even `docker … up -d`), so the
+> icon stays available until you stop or close it.
+
+Each group header also has a **pencil** icon (next to the count) that opens the
+file the group's commands come from — `commands-list.json` for custom groups,
+`package.json` for the npm scripts group.
 
 ---
 

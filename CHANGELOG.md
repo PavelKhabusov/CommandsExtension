@@ -2,6 +2,16 @@
 
 All notable changes to Commands Extension are documented here.
 
+## [0.0.17] - 2026-08-27
+
+### Added
+- **Bound stop command** (`"stop": "<name>"` on a command) — while a start command is running, its card shows a red ⏹ Stop icon that closes its terminal and runs the named stop command (resolved by name, like combined-op steps). Several starts can share one stop (project start variants → one "Stop"), and on/off pairs (a service "up" bound to its "down") toggle from a single icon. When the stop command finishes (via Shell Integration), its own terminal is auto-closed — leaving one empty terminal if it was the last, so the terminal panel doesn't collapse.
+- **Hidden commands** (`"hidden": true`) — keep a command out of the list (e.g. a stop command reached only via another command's Stop icon); a group left empty by hiding is dropped.
+- **Open source from group header** — a pencil on each group header opens the file its commands come from: `commands-list.json` for custom groups, `package.json` for the npm scripts group. The count badge moved to the far right with the header icons to its left.
+
+### Changed
+- **Quick Upload from Spec grouped by server** — spec pairs are now grouped by server, so every file bound for one server uploads over a single connection in one run even when their remote dirs differ. A spec pasted into the "What to upload?" picker (or already on the clipboard) is recognised there, and the input box shows a live preview grouped by server («server» dir ← files).
+
 ## [0.0.16] - 2026-07-10
 
 ### Added
