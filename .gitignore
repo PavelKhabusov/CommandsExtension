@@ -8,3 +8,4 @@ dist/
 # this gitignore is for the *extension repo* — projects using the extension are unaffected).
 /commands-list.json
 /server-uploads.local.json
+/spec.test.txt
