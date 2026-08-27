@@ -567,6 +567,20 @@
 		});
 		item.appendChild(closeBtn);
 
+		// Stop button (only for commands with a bound stop command; visible while
+		// the terminal is active). Closes this terminal and runs the stop command.
+		if (cmd.stop) {
+			const stopBtn = document.createElement('button');
+			stopBtn.className = 'cmd-stop-btn';
+			stopBtn.innerHTML = '&#x23F9;';
+			stopBtn.title = 'Stop — close terminal and run "' + cmd.stop + '"';
+			stopBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				vscode.postMessage({ type: 'stopCommand', name: cmd.name, stop: cmd.stop });
+			});
+			item.appendChild(stopBtn);
+		}
+
 		item.appendChild(starBtn);
 
 		// Apply active terminal indicator if terminal is open
@@ -709,6 +723,14 @@
 	function renderGroups(groups) {
 		if (!container) return;
 
+		// Drop commands flagged `hidden` (e.g. a stop command reached only via a
+		// start command's Stop button), and any group left empty by that.
+		if (groups) {
+			groups = groups
+				.map((g) => ({ ...g, commands: (g.commands || []).filter((c) => !c.hidden) }))
+				.filter((g) => g.commands.length > 0);
+		}
+
 		if (!groups || groups.length === 0) {
 			container.innerHTML = '<p class="empty-message">No commands found. Create a commands-list.json in your workspace root or add scripts to package.json.</p>';
 			return;
@@ -805,7 +827,20 @@
 			const countBadge = document.createElement('span');
 			countBadge.className = 'group-count';
 			countBadge.textContent = String(group.commands.length);
-			header.appendChild(countBadge);
+
+			// Pencil → open the file this group's commands come from
+			// (commands-list.json or package.json). Same as the Server Uploads edit.
+			if (group.source === 'commands-list.json' || group.source === 'package.json') {
+				const editBtn = document.createElement('button');
+				editBtn.className = 'group-edit-btn';
+				editBtn.title = group.source === 'package.json' ? 'Open package.json' : 'Open commands config file';
+				editBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M11.5 1.7l2.8 2.8-9 9-3.3.5.5-3.3z"/><path d="M10 3.2l2.8 2.8"/></svg>';
+				editBtn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					vscode.postMessage({ type: 'openCommandsSource', source: group.source });
+				});
+				header.appendChild(editBtn);
+			}
 
 			// Delete button for custom groups (from commands-list.json)
 			if (group.source === 'commands-list.json') {
@@ -819,6 +854,9 @@
 				});
 				header.appendChild(deleteBtn);
 			}
+
+			// Count last so it sits on the far right, with the icons to its left.
+			header.appendChild(countBadge);
 
 			const commandsEl = document.createElement('div');
 			commandsEl.className = 'group-commands';

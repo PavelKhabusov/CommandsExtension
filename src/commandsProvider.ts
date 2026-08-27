@@ -11,6 +11,8 @@ interface CommandsJsonSchema {
     type: 'terminal' | 'pwsh' | 'node';
     group?: string;
     cwd?: string;
+    stop?: string;
+    hidden?: boolean;
   }>;
   combined?: CombinedOpDefinition[];
 }
@@ -62,6 +64,8 @@ async function loadFromCommandsJson(filePath: string): Promise<CommandDefinition
       type: cmd.type,
       group: cmd.group || 'General',
       cwd: cmd.cwd,
+      stop: cmd.stop,
+      hidden: cmd.hidden,
     }));
 }
 

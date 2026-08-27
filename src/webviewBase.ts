@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { CommandDefinition } from './types';
 import { loadCommands, addCommandToFile, moveCommandInFile, removeGroupFromFile, removeCommandFromFile, loadCombinedOps, saveCombinedOp, deleteCombinedOp } from './commandsProvider';
 import { getMarketplaceTemplates } from './marketplace';
@@ -246,6 +247,35 @@ export class WebviewMessageHandler {
 			case 'closeTerminal':
 				if (message.name) TerminalManager.getInstance().closeTerminal(message.name as string);
 				break;
+			case 'stopCommand': {
+				// Close the running command's terminal, then run its bound stop command.
+				if (message.name) TerminalManager.getInstance().closeTerminal(message.name as string);
+				if (message.stop) {
+					const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+					if (workspaceRoot) {
+						const groups = await loadCommands(workspaceRoot, getConfigFile());
+						let stopCmd: CommandDefinition | undefined;
+						for (const g of groups) {
+							const c = g.commands.find((cc) => cc.name === message.stop);
+							if (c) { stopCmd = c; break; }
+						}
+						if (stopCmd) {
+							this._postMessage({ type: 'commandStarted', name: stopCmd.name });
+							// Wait for the stop command to finish (Shell Integration), then
+							// auto-close its terminal — keeping the panel open if it was last.
+							// If SI is unavailable (tracked=false) we can't tell when it's
+							// done, so we leave the terminal rather than kill it mid-run.
+							const res = await TerminalManager.getInstance().runCommandTracked(stopCmd);
+							if (res.tracked) {
+								TerminalManager.getInstance().closeTerminalKeepPanel(stopCmd.name);
+							}
+						} else {
+							vscode.window.showWarningMessage(`Stop command not found: ${message.stop}`);
+						}
+					}
+				}
+				break;
+			}
 			case 'clearTerminals':
 				TerminalManager.getInstance().disposeAll();
 				break;
@@ -350,6 +380,23 @@ export class WebviewMessageHandler {
 				const uri = await ensureUploadsFile(wsRoot, getUploadsFile());
 				const doc = await vscode.workspace.openTextDocument(uri);
 				await vscode.window.showTextDocument(doc);
+				break;
+			}
+			case 'openCommandsSource': {
+				// Pencil on a group header → open the file the group's commands come from.
+				const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				if (!wsRoot) return;
+				const src = message.source as string | undefined;
+				let file: string | undefined;
+				if (src === 'commands-list.json') file = path.join(wsRoot, getConfigFile());
+				else if (src === 'package.json') file = path.join(wsRoot, 'package.json');
+				if (!file) return;
+				try {
+					const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+					await vscode.window.showTextDocument(doc);
+				} catch {
+					vscode.window.showWarningMessage(`Commands Extension: cannot open ${path.basename(file)}`);
+				}
 				break;
 			}
 			case 'setCombinedCollapsed':

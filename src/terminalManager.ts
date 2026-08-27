@@ -92,11 +92,37 @@ export class TerminalManager {
 
 	public closeTerminal(commandName: string): void {
 		const terminalName = `Cmd: ${commandName}`;
-		const terminal = this._terminals.get(terminalName);
-		if (terminal) {
-			terminal.dispose();
+		const tracked = this._terminals.get(terminalName);
+		if (tracked) {
+			tracked.dispose();
 			this._terminals.delete(terminalName);
 		}
+		// Also dispose any live terminal with this name that wasn't in our map
+		// (adopted late, user-opened, or reused), so Stop/close always closes it.
+		for (const t of vscode.window.terminals) {
+			if (t.name === terminalName && t !== tracked) t.dispose();
+		}
+		this._notifyChange();
+	}
+
+	/**
+	 * Close a (finished) command's terminal, but keep the terminal PANEL open: if
+	 * this was the last terminal, leave a fresh empty one so the panel doesn't
+	 * collapse. Used to auto-clean a stop command's terminal after it completes.
+	 */
+	public closeTerminalKeepPanel(commandName: string): void {
+		const terminalName = `Cmd: ${commandName}`;
+		const term = this._terminals.get(terminalName)
+			?? vscode.window.terminals.find((t) => t.name === terminalName);
+		if (!term) return;
+		const wasLast = vscode.window.terminals.length <= 1;
+		term.dispose();
+		this._terminals.delete(terminalName);
+		if (wasLast) {
+			// Leave one empty terminal so the panel stays open (just empty).
+			vscode.window.createTerminal().show(true); // preserveFocus — don't grab focus
+		}
+		this._notifyChange();
 	}
 
 	public runCommand(cmd: CommandDefinition): void {

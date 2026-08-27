@@ -272,6 +272,30 @@ body {
 	color: var(--vscode-errorForeground);
 }
 
+.group-edit-btn {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.1s;
+	line-height: 1;
+}
+
+.group-header:hover .group-edit-btn {
+	opacity: 0.75;
+}
+
+.group-edit-btn:hover {
+	background-color: var(--vscode-list-hoverBackground);
+	opacity: 1;
+}
+
 .group-commands {
 	display: flex;
 	flex-direction: column;
@@ -878,6 +902,31 @@ body {
 .cmd-close-btn:hover {
 	background-color: var(--vscode-list-hoverBackground);
 	color: var(--vscode-errorForeground);
+}
+
+.cmd-stop-btn {
+	flex-shrink: 0;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: none;
+	border-radius: 0;
+	color: var(--vscode-errorForeground, #e05252);
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 0;
+	margin: 0;
+	opacity: 0.85;
+}
+
+.cmd-item.has-terminal .cmd-stop-btn {
+	display: inline-flex;
+}
+
+.cmd-stop-btn:hover {
+	opacity: 1;
 }
 
 /* ── Marketplace hint badge ── */
