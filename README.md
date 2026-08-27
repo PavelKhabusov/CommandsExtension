@@ -20,8 +20,6 @@ your `package.json` scripts and `.ps1` files automatically — then run anything
 
 ---
 
----
-
 ## Quick Start
 
 ```bash
