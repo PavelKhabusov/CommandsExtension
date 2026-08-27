@@ -20,6 +20,8 @@ your `package.json` scripts and `.ps1` files automatically — then run anything
 
 ---
 
+> 💬 Questions → [Discussions · Q&A](https://github.com/PavelKhabusov/CommandsExtension/discussions/categories/q-a) · Ideas → [vote](https://github.com/PavelKhabusov/CommandsExtension/discussions/categories/ideas) · Bugs → [Issues](https://github.com/PavelKhabusov/CommandsExtension/issues/new/choose)
+
 ## Quick Start
 
 ```bash

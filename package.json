@@ -23,6 +23,10 @@
     "url": "https://github.com/PavelKhabusov/CommandsExtension"
   },
   "license": "MIT",
+  "qna": "https://github.com/PavelKhabusov/CommandsExtension/discussions/categories/q-a",
+  "bugs": {
+    "url": "https://github.com/PavelKhabusov/CommandsExtension/issues"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],

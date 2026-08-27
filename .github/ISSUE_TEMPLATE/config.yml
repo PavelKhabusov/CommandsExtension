@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🙏 Question / help
+    url: https://github.com/PavelKhabusov/CommandsExtension/discussions/categories/q-a
+    about: Setup and usage questions — answered in Discussions, not Issues
+  - name: 💡 Feature idea
+    url: https://github.com/PavelKhabusov/CommandsExtension/discussions/categories/ideas
+    about: Propose and vote for features

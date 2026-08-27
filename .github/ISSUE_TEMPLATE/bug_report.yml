@@ -1,0 +1,30 @@
+name: 🐛 Bug report
+description: Something is broken
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Extension version
+      placeholder: "0.0.16"
+    validations:
+      required: true
+  - type: input
+    id: vscode
+    attributes:
+      label: VS Code version and OS
+      placeholder: "1.9x, Arch Linux"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Steps to reproduce, expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: commands-list.json (relevant part)
+      render: json
