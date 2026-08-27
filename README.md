@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="media/icon.svg" width="96" alt="Commands Extension">
+<img src="assets/icon.png" width="96" alt="Commands Extension">
 
 # Commands Extension
 
