@@ -1,8 +1,9 @@
-# Future ideas
+# Roadmap
 
-Things considered during Combined Operations + Claude Hooks Manager
-design but intentionally left out of MVP. Pick up if/when a real need
-shows up.
+Ideas considered during Combined Operations + Claude Hooks Manager design but
+intentionally left out of the MVP — picked up if/when a real need shows up.
+Not a commitment; feel free to propose or vote in
+[Discussions · Ideas](https://github.com/PavelKhabusov/CommandsExtension/discussions/categories/ideas).
 
 ## Combined Operations
 

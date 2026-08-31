@@ -2,6 +2,11 @@
 
 All notable changes to Commands Extension are documented here.
 
+## [0.0.18] - 2026-08-31
+
+### Changed
+- **Snapshot-based partial ("Modified") uploads** — a partial upload re-walks the upload's items at run time and diffs every file's mtime against the snapshot from the last successful upload, so files changed outside VS Code (CLI scripts, `git rebase`, generators) and brand-new in-scope files are always picked up; if nothing differs it finishes immediately with "Everything up to date" (`mirror` deletions still happen only on full uploads). Snapshots also keep a sha1 of each uploaded file, so an mtime bump with identical content (e.g. `git checkout` / branch switch) heals itself instead of flagging the whole tree as Modified — for both the badges and what a partial upload sends.
+
 ## [0.0.17] - 2026-08-27
 
 ### Added
