@@ -249,6 +249,8 @@ export class UploadRunner {
       // Mirror-очистка только при полной заливке: частичная (fileFilter)
       // не знает полного локального состава и удалять ничего не должна.
       const mirror = upload.mode === 'mirror' && !fileFilter && !baseline;
+      // Точечная/снапшот-заливка сама знает состав — серверный скан skipUnchanged не нужен.
+      if (fileFilter || baseline) upload = { ...upload, skipUnchanged: [] };
 
       if (upload.protocol === 'sftp') {
         await this._runSftp(upload, password, items, emit, ctrl.signal, mirror);
