@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import * as ftp from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
 import { ResolvedUpload, UploadProgress, UploadStatus, ServerDefinition } from './uploadsTypes';
-import { resolveItems, ResolvedItem } from './uploadsProvider';
+import { resolveItems, ResolvedItem, hashFileSync } from './uploadsProvider';
 
 /**
  * Ask the external hub (commandsExtension.externalApiUrl) to prepare the
@@ -176,7 +176,8 @@ export class UploadRunner {
     workspaceRoot: string,
     upload: ResolvedUpload,
     fileFilter?: Set<string>,
-    baseline?: Map<string, number>
+    baseline?: Map<string, number>,
+    baselineHashes?: Map<string, string>
   ): Promise<void> {
     const key = `${upload.group}:${upload.name}`;
     if (this._active.has(key)) {
@@ -211,7 +212,10 @@ export class UploadRunner {
           if (it.type !== 'file') return true;
           const prev = baseline.get(it.absolutePath);
           if (prev === undefined) return true;
-          try { return fs.statSync(it.absolutePath).mtimeMs > prev; } catch { return false; }
+          try { if (fs.statSync(it.absolutePath).mtimeMs <= prev) return false; } catch { return false; }
+          const known = baselineHashes?.get(it.absolutePath);
+          if (known && hashFileSync(it.absolutePath) === known) return false;
+          return true;
         });
         if (!items.some((it) => it.type === 'file')) {
           emit({ status: 'done', message: 'Everything up to date (no files changed since last upload)', percent: 100, finishedAt: Date.now() });

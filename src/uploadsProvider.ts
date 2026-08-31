@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { UploadDefinition, UploadGroup, UploadProtocol, ServerDefinition, ResolvedUpload } from './uploadsTypes';
@@ -141,6 +142,17 @@ function isValidUpload(u: unknown): u is UploadDefinition {
 
 export function uploadKey(u: UploadDefinition): string {
   return `${u.group || 'Uploads'}:${u.name}`;
+}
+
+
+/** sha1 контента для верификации «modified»: null для не-файлов и файлов крупнее лимита. */
+export const HASH_MAX_BYTES = 32 * 1024 * 1024;
+export function hashFileSync(p: string): string | null {
+  try {
+    const st = fs.statSync(p);
+    if (!st.isFile() || st.size > HASH_MAX_BYTES) return null;
+    return crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex');
+  } catch { return null; }
 }
 
 export interface ResolvedItem {

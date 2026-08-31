@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
@@ -7,7 +8,7 @@ import { CommandsSidebarProvider } from './sidebarProvider';
 import { TerminalManager } from './terminalManager';
 import { UploadRunner, uploadFilesTo, listRemoteDir, remoteMkdir, QuickFile } from './uploadRunner';
 import { UploadProgress, ResolvedUpload, ServerDefinition } from './uploadsTypes';
-import { isPathInUploadScope, resolveItems, loadUploads, resolveServer } from './uploadsProvider';
+import { isPathInUploadScope, resolveItems, loadUploads, resolveServer, hashFileSync, HASH_MAX_BYTES } from './uploadsProvider';
 import { loadCommands, loadCombinedOps } from './commandsProvider';
 import { CombinedOpDefinition, CombinedOpProgress } from './combinedOpsTypes';
 import { CombinedOpRunner } from './combinedOpRunner';
@@ -79,6 +80,9 @@ class UploadStalenessTracker {
   private readonly _newFiles = new Map<string, Set<string>>();
   private readonly _scopes = new Map<string, UploadScope>();
   private readonly _reverseIndex = new Map<string, Set<string>>();
+  private readonly _hashes = new Map<string, Map<string, string>>();
+  private readonly _hashQueue = new Set<string>();
+  private _hashTimer: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly _context: vscode.ExtensionContext,
@@ -90,6 +94,7 @@ class UploadStalenessTracker {
   private _restore(): void {
     type Stored = Record<string, {
       snapshot: Record<string, number>;
+      hashes?: Record<string, string>;
       scope?: UploadScope;
       newFiles?: string[];
     }>;
@@ -97,9 +102,17 @@ class UploadStalenessTracker {
     for (const [key, data] of Object.entries(saved)) {
       const snap = new Map<string, number>(Object.entries(data.snapshot));
       this._snapshots.set(key, snap);
+      const hm = new Map<string, string>(Object.entries(data.hashes ?? {}));
+      this._hashes.set(key, hm);
       const stale = new Set<string>();
       for (const [p, snapMtime] of snap) {
-        try { if (fs.statSync(p).mtimeMs > snapMtime) stale.add(p); } catch { /* deleted */ }
+        try {
+          if (fs.statSync(p).mtimeMs <= snapMtime) continue;
+          // mtime новее, но контент прежний (типично после git checkout) — лечим mtime
+          const known = hm.get(p);
+          if (known && hashFileSync(p) === known) { snap.set(p, fs.statSync(p).mtimeMs); continue; }
+          stale.add(p);
+        } catch { /* deleted */ }
       }
       this._staleFiles.set(key, stale);
       if (data.scope) this._scopes.set(key, data.scope);
@@ -153,6 +166,7 @@ class UploadStalenessTracker {
     }
 
     const changedKeys = new Set<string>([key]);
+    this._scheduleHashes(Array.from(freshMtimes.keys()));
 
     if (scope) this._scopes.set(key, scope);
 
@@ -228,11 +242,21 @@ class UploadStalenessTracker {
     // 1. Tracked files: check mtime vs snapshot
     const keys = this._reverseIndex.get(filePath);
     if (keys?.size) {
+      let curHash: string | null | undefined;
+      const fileHash = () => (curHash === undefined ? (curHash = hashFileSync(filePath)) : curHash);
       for (const key of keys) {
         const snap = this._snapshots.get(key);
         if (!snap) continue;
         const snapMtime = snap.get(filePath);
         if (snapMtime === undefined || currentMtime <= snapMtime) continue;
+        const known = this._hashes.get(key)?.get(filePath);
+        if (known && fileHash() === known) {
+          // контент не менялся (git checkout и т.п.) — обновляем mtime без stale
+          snap.set(filePath, currentMtime);
+          const st = this._staleFiles.get(key);
+          if (st?.delete(filePath)) changedKeys.add(key);
+          continue;
+        }
         const stale = this._staleFiles.get(key) ?? new Set();
         if (stale.has(filePath)) continue;
         stale.add(filePath);
@@ -286,6 +310,7 @@ class UploadStalenessTracker {
     }
     this._staleFiles.set(key, new Set());
     this._newFiles.set(key, new Set());
+    this._scheduleHashes(Array.from(snap.keys()));
 
     const changedKeys = new Set<string>([key]);
     // Propagate: any file now tracked by this key should also clear from others
@@ -398,9 +423,47 @@ class UploadStalenessTracker {
     return result;
   }
 
+  public getHashes(key: string): Map<string, string> | undefined {
+    return this._hashes.get(key);
+  }
+
+  /** Фоновая дозапись sha1: каждому key, чей снапшот знает путь. Не блокирует UI. */
+  private _scheduleHashes(paths: string[]): void {
+    for (const p of paths) this._hashQueue.add(p);
+    if (this._hashTimer) return;
+    this._hashTimer = setTimeout(() => { void this._drainHashQueue(); }, 200);
+  }
+
+  private async _drainHashQueue(): Promise<void> {
+    const batch = Array.from(this._hashQueue);
+    this._hashQueue.clear();
+    this._hashTimer = undefined;
+    let touched = false;
+    for (const p of batch) {
+      let h: string | null = null;
+      try {
+        const st = await fs.promises.stat(p);
+        if (st.isFile() && st.size <= HASH_MAX_BYTES) {
+          const buf = await fs.promises.readFile(p);
+          h = crypto.createHash('sha1').update(buf).digest('hex');
+        }
+      } catch { /* deleted */ }
+      for (const [key, snap] of this._snapshots) {
+        if (!snap.has(p)) continue;
+        let hm = this._hashes.get(key);
+        if (h === null) { hm?.delete(p); continue; }
+        if (!hm) { hm = new Map(); this._hashes.set(key, hm); }
+        if (hm.get(p) !== h) { hm.set(p, h); touched = true; }
+      }
+    }
+    if (this._hashQueue.size) this._hashTimer = setTimeout(() => { void this._drainHashQueue(); }, 50);
+    if (touched) this._persist();
+  }
+
   private _persist(): void {
     type Stored = Record<string, {
       snapshot: Record<string, number>;
+      hashes?: Record<string, string>;
       scope?: UploadScope;
       newFiles?: string[];
     }>;
@@ -408,6 +471,7 @@ class UploadStalenessTracker {
     for (const [key, snap] of this._snapshots) {
       saved[key] = {
         snapshot: Object.fromEntries(snap),
+        hashes: Object.fromEntries(this._hashes.get(key) ?? new Map<string, string>()),
         scope: this._scopes.get(key),
         newFiles: Array.from(this._newFiles.get(key) ?? []),
       };
@@ -580,9 +644,11 @@ async function handleRunCommand(
           if (!resolved) return;
           let fileFilter: Set<string> | undefined;
           let baseline: Map<string, number> | undefined;
+          let baselineHashes: Map<string, string> | undefined;
           if (stale) {
             const key = `${g.name || 'Uploads'}:${u.name}`;
             baseline = uploadStalenessTracker?.getSnapshot(key);
+            baselineHashes = uploadStalenessTracker?.getHashes(key);
             if (!baseline) {
               const info = uploadStalenessTracker?.getStalenessMap()[key];
               if (info && info.staleness === 'stale' && info.staleFiles.length > 0) {
@@ -594,7 +660,7 @@ async function handleRunCommand(
               }
             }
           }
-          await uploadRunner.run(myRoot, resolved, fileFilter, baseline);
+          await uploadRunner.run(myRoot, resolved, fileFilter, baseline, baselineHashes);
           return;
         }
       }

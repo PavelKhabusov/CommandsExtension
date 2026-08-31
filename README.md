@@ -10,6 +10,7 @@ your `package.json` scripts and `.ps1` files automatically — then run anything
 [![Marketplace](https://vsmarketplacebadges.dev/version/PavelKhabusov.commands-extension.svg?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![Installs](https://vsmarketplacebadges.dev/installs/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![Rating](https://vsmarketplacebadges.dev/rating-short/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension&ssr=false#review-details)
+![Version](https://img.shields.io/badge/version-0.0.17-4c9a4f)
 ![License](https://img.shields.io/badge/license-MIT-7ba7d4)
 
 ![VS Code](https://img.shields.io/badge/VS%20Code-extension-007ACC?logo=visualstudiocode&logoColor=white)
@@ -102,6 +103,10 @@ Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.jso
 - **Cancel mid-flight** — stop button on running uploads
 - **Files, folders, globs** — single files, recursive folder uploads, or glob patterns
 - **Per-upload `exclude`** — skip files inside an uploaded folder (e.g. `**/node_modules/**`)
+- **Parallel transfers** — `"connections": N` opens a pool of FTP/SFTP connections (default 4 / sftp 2); directory creation is cached per deploy
+- **Mirror deploys** — `"mode": "mirror"` deletes remote files that no longer exist locally (full uploads only); `protectRemote` globs and `.htaccess` are never touched
+- **`skipUnchanged` globs** — matching files whose remote size equals the local size are skipped (content-hashed builds re-deploy only new chunks)
+- **Modified tracking** — cards show `⚠ N files modified` since the last upload; a per-server "Upload only N modified" action sends just those, and a header ✓ button marks everything synced
 - **Shared `servers`** — define a server once, reference it from many uploads
 - **Interactive picker** — folder-with-plus button opens a native file/folder dialog and appends selections to the config
 - **`.local.json` by default** — the default filename is excluded by common gitignore patterns so credentials stay out of git
@@ -160,6 +165,12 @@ Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.jso
 | `items` | string[] | yes | Files, folders, or globs (relative to workspace root) |
 | `exclude` | string[] | no | Glob patterns to skip during folder/glob expansion |
 | `onExists` | `"overwrite"` \| `"skip"` | no | Behavior on file collision (default: `"overwrite"`) |
+| `mode` | `"mirror"` | no | After a full upload, delete remote files missing locally and prune empty dirs (partial uploads never delete) |
+| `protectRemote` | string[] | no | Globs (relative to `remoteDir`) the mirror must never delete; `.htaccess` is always protected |
+| `connections` | number 1–8 | no | Parallel connection pool (default 4 for ftp/ftps, 2 for sftp) |
+| `skipUnchanged` | string[] | no | Globs whose files are skipped when remote size equals local size |
+
+Folder items follow rsync trailing-slash semantics: `"folder/"` uploads the folder's *contents* into `remoteDir`, `"folder"` keeps the folder name on the server.
 
 Right-click an upload for context menu actions: edit config, add files.
 
@@ -200,6 +211,10 @@ user just pastes it. One pair per line:
 - **`serverName`** — must match a `name` in `servers[]` of `server-uploads.local.json`.
 - **right of `:`** — target directory on the server.
 - Multiple pairs: separate by newline **or** `;` (the interactive input box is single-line, so use `;` when pasting several pairs there). Lines starting with `#` are ignored.
+- Pairs are **grouped by server**: everything bound for one server uploads over a single
+  connection in one run, even when remote dirs differ. The input box shows a live parse
+  preview grouped by server; a spec pasted into the Quick-upload picker (or already on
+  the clipboard) is recognised there too.
 
 Example:
 
