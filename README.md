@@ -101,7 +101,7 @@ Click **+** in the toolbar to add new commands without touching JSON. Pick an ex
 
 Per-project **FTP / FTPS / SFTP** upload targets in `server-uploads.local.json`, run
 with one click — live progress, cancel, mirror deploys, parallel transfers,
-`skipUnchanged`, snapshot-based "Modified" uploads, and a Quick Upload for one-off
+`skipUnchanged`, badge-exact "Modified" uploads, and a Quick Upload for one-off
 files. **[Full reference → docs/server-uploads.md](docs/server-uploads.md).**
 
 ### Marketplace Templates

@@ -81,19 +81,15 @@ Right-click an upload for context menu actions: edit config, add files.
 
 > **Proxy / VPN note:** uploads use raw TCP sockets; HTTP proxy settings (system or VS Code) are not applied. System-level VPN tunnels are honored transparently by the OS — bypassing them requires VPN-level split tunneling.
 
-## Modified (partial) uploads are snapshot-based
+## Modified uploads = exactly what the badge shows
 
-A partial upload ("Modified") does not trust live file-watcher events alone: at run
-time it re-walks the upload's items and diffs every file's mtime against the snapshot
-taken at the last successful upload. Files changed outside VS Code (CLI scripts,
-`git rebase`, generators) are therefore always picked up, and brand-new in-scope files
-upload too. If nothing differs from the snapshot the run finishes immediately with
-"Everything up to date". `mirror` deletions still happen only on full uploads.
-
-Snapshots also keep a sha1 of each uploaded file, so an mtime bump with identical
-content (typically `git checkout` / branch switching touching files) heals itself
-instead of flagging the whole tree as Modified — both for the badges and for what
-a partial upload actually sends.
+The "Modified" action uploads precisely the files listed in the staleness badge —
+no hidden re-scans, no surprises. Badges are fed by file-watcher events, a re-check
+of tracked files on activation, and a scope rescan when the uploads config changes.
+Snapshots keep a sha1 of each uploaded file, so an mtime bump with identical content
+(typically `git checkout` / branch switching) heals itself instead of flagging the
+tree as Modified. `mirror` deletions and `skipUnchanged` sizing apply to full
+uploads only.
 
 ## Quick Upload (untracked files → any server path)
 
