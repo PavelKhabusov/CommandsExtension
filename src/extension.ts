@@ -643,24 +643,18 @@ async function handleRunCommand(
           const resolved = resolveServer(u, ud.servers);
           if (!resolved) return;
           let fileFilter: Set<string> | undefined;
-          let baseline: Map<string, number> | undefined;
-          let baselineHashes: Map<string, string> | undefined;
           if (stale) {
             const key = `${g.name || 'Uploads'}:${u.name}`;
-            baseline = uploadStalenessTracker?.getSnapshot(key);
-            baselineHashes = uploadStalenessTracker?.getHashes(key);
-            if (!baseline) {
-              const info = uploadStalenessTracker?.getStalenessMap()[key];
-              if (info && info.staleness === 'stale' && info.staleFiles.length > 0) {
-                fileFilter = new Set(info.staleFiles);
-              } else {
-                // Nothing modified — bail out silently instead of running a
-                // full upload, otherwise "Modified" silently behaves like "All".
-                return;
-              }
+            const info = uploadStalenessTracker?.getStalenessMap()[key];
+            if (info && info.staleness === 'stale' && info.staleFiles.length > 0) {
+              fileFilter = new Set(info.staleFiles);
+            } else {
+              // Nothing modified — bail out silently instead of running a
+              // full upload, otherwise "Modified" silently behaves like "All".
+              return;
             }
           }
-          await uploadRunner.run(myRoot, resolved, fileFilter, baseline, baselineHashes);
+          await uploadRunner.run(myRoot, resolved, fileFilter);
           return;
         }
       }

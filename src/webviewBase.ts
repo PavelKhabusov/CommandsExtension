@@ -366,11 +366,9 @@ export class WebviewMessageHandler {
 					const resolved = resolveServer(upload, this._cachedServers);
 					if (!resolved) continue;
 					const info = stalenessMap[uKey];
-					const baseline = uploadStalenessTracker?.getSnapshot(uKey);
-					const baselineHashes = uploadStalenessTracker?.getHashes(uKey);
-					const fileFilter = !baseline && info?.staleFiles.length ? new Set(info.staleFiles) : undefined;
-					if (!baseline && !fileFilter?.size) continue;
-					uploadRunner.run(wsRoot, resolved, fileFilter, baseline, baselineHashes).catch((e) => {
+					const fileFilter = info?.staleFiles.length ? new Set(info.staleFiles) : undefined;
+					if (!fileFilter?.size) continue;
+					uploadRunner.run(wsRoot, resolved, fileFilter).catch((e) => {
 						vscode.window.showErrorMessage(`Upload failed: ${e instanceof Error ? e.message : e}`);
 					});
 				}

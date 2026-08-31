@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import * as ftp from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
 import { ResolvedUpload, UploadProgress, UploadStatus, ServerDefinition } from './uploadsTypes';
-import { resolveItems, ResolvedItem, hashFileSync } from './uploadsProvider';
+import { resolveItems, ResolvedItem } from './uploadsProvider';
 
 /**
  * Ask the external hub (commandsExtension.externalApiUrl) to prepare the
@@ -175,9 +175,7 @@ export class UploadRunner {
   public async run(
     workspaceRoot: string,
     upload: ResolvedUpload,
-    fileFilter?: Set<string>,
-    baseline?: Map<string, number>,
-    baselineHashes?: Map<string, string>
+    fileFilter?: Set<string>
   ): Promise<void> {
     const key = `${upload.group}:${upload.name}`;
     if (this._active.has(key)) {
@@ -205,23 +203,6 @@ export class UploadRunner {
       if (fileFilter && fileFilter.size > 0) {
         items = items.filter((it) => fileFilter.has(it.absolutePath));
       }
-      // Partial по снапшоту: диффим РЕАЛЬНОЕ дерево против mtime последней заливки,
-      // а не только события watcher'а — внешние правки (CLI/git) не теряются.
-      if (baseline) {
-        items = items.filter((it) => {
-          if (it.type !== 'file') return true;
-          const prev = baseline.get(it.absolutePath);
-          if (prev === undefined) return true;
-          try { if (fs.statSync(it.absolutePath).mtimeMs <= prev) return false; } catch { return false; }
-          const known = baselineHashes?.get(it.absolutePath);
-          if (known && hashFileSync(it.absolutePath) === known) return false;
-          return true;
-        });
-        if (!items.some((it) => it.type === 'file')) {
-          emit({ status: 'done', message: 'Everything up to date (no files changed since last upload)', percent: 100, finishedAt: Date.now() });
-          return;
-        }
-      }
       if (items.length === 0) {
         emit({ status: 'error', message: 'No files found to upload (check items / exclude)', finishedAt: Date.now() });
         return;
@@ -248,9 +229,9 @@ export class UploadRunner {
 
       // Mirror-очистка только при полной заливке: частичная (fileFilter)
       // не знает полного локального состава и удалять ничего не должна.
-      const mirror = upload.mode === 'mirror' && !fileFilter && !baseline;
-      // Точечная/снапшот-заливка сама знает состав — серверный скан skipUnchanged не нужен.
-      if (fileFilter || baseline) upload = { ...upload, skipUnchanged: [] };
+      const mirror = upload.mode === 'mirror' && !fileFilter;
+      // Точечная заливка сама знает состав — серверный скан skipUnchanged не нужен.
+      if (fileFilter) upload = { ...upload, skipUnchanged: [] };
 
       if (upload.protocol === 'sftp') {
         await this._runSftp(upload, password, items, emit, ctrl.signal, mirror);
