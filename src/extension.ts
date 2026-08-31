@@ -383,6 +383,11 @@ class UploadStalenessTracker {
     }
   }
 
+  /** Снапшот последней заливки (mtime по файлам) — источник правды для partial-диффа. */
+  public getSnapshot(key: string): Map<string, number> | undefined {
+    return this._snapshots.get(key);
+  }
+
   public getStalenessMap(): Record<string, StalenessInfo> {
     const result: Record<string, StalenessInfo> = {};
     const allKeys = new Set<string>();
@@ -574,18 +579,22 @@ async function handleRunCommand(
           const resolved = resolveServer(u, ud.servers);
           if (!resolved) return;
           let fileFilter: Set<string> | undefined;
+          let baseline: Map<string, number> | undefined;
           if (stale) {
             const key = `${g.name || 'Uploads'}:${u.name}`;
-            const info = uploadStalenessTracker?.getStalenessMap()[key];
-            if (info && info.staleness === 'stale' && info.staleFiles.length > 0) {
-              fileFilter = new Set(info.staleFiles);
-            } else {
-              // Nothing modified — bail out silently instead of running a
-              // full upload, otherwise "Modified" silently behaves like "All".
-              return;
+            baseline = uploadStalenessTracker?.getSnapshot(key);
+            if (!baseline) {
+              const info = uploadStalenessTracker?.getStalenessMap()[key];
+              if (info && info.staleness === 'stale' && info.staleFiles.length > 0) {
+                fileFilter = new Set(info.staleFiles);
+              } else {
+                // Nothing modified — bail out silently instead of running a
+                // full upload, otherwise "Modified" silently behaves like "All".
+                return;
+              }
             }
           }
-          await uploadRunner.run(myRoot, resolved, fileFilter);
+          await uploadRunner.run(myRoot, resolved, fileFilter, baseline);
           return;
         }
       }
