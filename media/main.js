@@ -1878,7 +1878,7 @@
 
 	function stepLabel(step) {
 		switch (step.type) {
-			case 'command': return step.name;
+			case 'command': return step.wait === false ? step.name + ' ∥' : step.name;
 			case 'upload': {
 				const parts = String(step.uploadKey || '').split(':');
 				return parts.length > 1 ? parts.slice(1).join(':') : step.uploadKey;
@@ -2320,6 +2320,33 @@
 				label.className = 'combined-step-label';
 				label.textContent = stepLabel(step);
 				row.appendChild(label);
+
+				// Command steps: "wait" = block until the command exits (default).
+				// Unchecked → runs in the background and the next step starts at once
+				// (e.g. backend + frontend dev servers side by side).
+				if (step.type === 'command') {
+					const waitWrap = document.createElement('label');
+					waitWrap.className = 'combined-step-wait';
+					const waitCb = document.createElement('input');
+					waitCb.type = 'checkbox';
+					waitCb.checked = step.wait !== false;
+					const setWaitTitle = () => {
+						waitWrap.title = waitCb.checked
+							? 'Wait for this command to finish before the next step. Uncheck to run it in the background — the next step starts immediately.'
+							: 'Runs in the background — the next step starts immediately.';
+					};
+					setWaitTitle();
+					waitCb.addEventListener('click', (e) => {
+						e.stopPropagation();
+						if (waitCb.checked) delete step.wait; else step.wait = false;
+						label.textContent = stepLabel(step);
+						setWaitTitle();
+					});
+					waitWrap.addEventListener('click', (e) => e.stopPropagation());
+					waitWrap.appendChild(waitCb);
+					waitWrap.appendChild(document.createTextNode(' wait'));
+					row.appendChild(waitWrap);
+				}
 
 				const del = document.createElement('button');
 				del.className = 'combined-step-del';

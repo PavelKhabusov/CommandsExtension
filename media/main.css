@@ -1812,6 +1812,23 @@ body {
 	white-space: nowrap;
 }
 
+.combined-step-wait {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	user-select: none;
+	white-space: nowrap;
+}
+
+.combined-step-wait input {
+	margin: 0;
+	cursor: pointer;
+}
+
 .combined-step-del {
 	background: transparent;
 	border: none;
