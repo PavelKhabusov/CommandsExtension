@@ -1084,6 +1084,32 @@ function joinPosix(a: string, b: string): string {
   return (a.replace(/\/+$/, '') || '') + '/' + b.replace(/^\/+/, '');
 }
 
+/**
+ * After a quick / spec upload, mark the uploaded files as synced in every
+ * configured upload whose scope covers them — so their "modified" badges clear
+ * exactly like after a regular upload. uploadFilesTo() bypasses UploadRunner,
+ * which is what normally feeds the staleness tracker.
+ */
+async function markQuickUploadSynced(files: QuickFile[]): Promise<void> {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot || !uploadStalenessTracker) return;
+  const { groups } = await loadUploads(workspaceRoot, quickUploadsFileName());
+  const paths = files.map((f) => f.localAbs);
+  for (const g of groups) {
+    for (const u of g.uploads) {
+      const exclude = u.exclude || [];
+      const covered = paths.filter((p) => isPathInUploadScope(p, workspaceRoot, u.items, exclude));
+      if (covered.length === 0) continue;
+      uploadStalenessTracker.onUploadDone(
+        `${u.group || 'Uploads'}:${u.name}`,
+        covered,
+        true,
+        { workspaceRoot, items: u.items, exclude }
+      );
+    }
+  }
+}
+
 /** Обёртка заливки в withProgress-нотификацию с отменой. */
 async function runQuickUpload(server: ServerDefinition, files: QuickFile[], remoteDir: string): Promise<void> {
   if (files.length === 0) { vscode.window.showWarningMessage('No files to upload.'); return; }
@@ -1106,6 +1132,8 @@ async function runQuickUpload(server: ServerDefinition, files: QuickFile[], remo
           }
         }, ac.signal);
         vscode.window.showInformationMessage(`Uploaded ${files.length} file(s) to ${target}`);
+        // Non-fatal: a tracker hiccup must not turn a successful upload into an error toast.
+        markQuickUploadSynced(files).catch(() => undefined);
       } catch (e) {
         vscode.window.showErrorMessage(`Quick upload failed: ${(e as Error).message}`);
       }
