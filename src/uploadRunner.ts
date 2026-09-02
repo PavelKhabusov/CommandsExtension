@@ -172,7 +172,11 @@ export class UploadRunner {
     if (ctrl) ctrl.abort();
   }
 
-  public async run(workspaceRoot: string, upload: ResolvedUpload, fileFilter?: Set<string>): Promise<void> {
+  public async run(
+    workspaceRoot: string,
+    upload: ResolvedUpload,
+    fileFilter?: Set<string>
+  ): Promise<void> {
     const key = `${upload.group}:${upload.name}`;
     if (this._active.has(key)) {
       vscode.window.showInformationMessage(`Upload "${upload.name}" is already running.`);
@@ -226,6 +230,8 @@ export class UploadRunner {
       // Mirror-очистка только при полной заливке: частичная (fileFilter)
       // не знает полного локального состава и удалять ничего не должна.
       const mirror = upload.mode === 'mirror' && !fileFilter;
+      // Точечная заливка сама знает состав — серверный скан skipUnchanged не нужен.
+      if (fileFilter) upload = { ...upload, skipUnchanged: [] };
 
       if (upload.protocol === 'sftp') {
         await this._runSftp(upload, password, items, emit, ctrl.signal, mirror);
