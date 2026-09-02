@@ -4,8 +4,16 @@ All notable changes to Commands Extension are documented here.
 
 ## [0.0.18] - 2026-08-31
 
+### Added
+- **Parallel steps in Combined Operations** — command steps now have a **wait** checkbox in the editor. Leave it on (default) and the step blocks until the command exits; uncheck it and the command runs in the background so the next step starts immediately — e.g. a backend and a frontend dev server side by side. Backgrounded steps are marked `∥` in the step list and persist as `"wait": false` in `commands-list.json`.
+
 ### Changed
-- **Snapshot-based partial ("Modified") uploads** — a partial upload re-walks the upload's items at run time and diffs every file's mtime against the snapshot from the last successful upload, so files changed outside VS Code (CLI scripts, `git rebase`, generators) and brand-new in-scope files are always picked up; if nothing differs it finishes immediately with "Everything up to date" (`mirror` deletions still happen only on full uploads). Snapshots also keep a sha1 of each uploaded file, so an mtime bump with identical content (e.g. `git checkout` / branch switch) heals itself instead of flagging the whole tree as Modified — for both the badges and what a partial upload sends.
+- **Modified uploads = exactly what the badge shows** — the "Modified" action uploads precisely the files listed in the staleness badge, with no hidden re-scan. Badges are fed by file-watcher events, a re-check of tracked files on activation, and a scope rescan when the uploads config changes. Snapshots keep a sha1 per uploaded file, so an mtime bump with identical content (typically `git checkout` / branch switching) heals itself instead of flagging the whole tree as Modified.
+- **Documentation reorganised** — the long reference sections (Server Uploads, Combined Operations, Claude Hooks Manager) moved out of the README into [`docs/`](docs/), with the former `future.md` ideas backlog as [`docs/roadmap.md`](docs/roadmap.md). The README drops from ~525 to ~290 lines.
+
+### Fixed
+- **Quick / spec uploads clear the modified badge** — Quick Upload and Quick Upload from Spec bypass the regular upload runner, so files they sent stayed flagged "modified" in the sidebar. They now mark the uploaded files as synced in every configured upload whose scope covers them.
+- **No server pre-scan on partial uploads** — `skipUnchanged` sizing is a full-run optimisation; partial (Modified/filtered) uploads already know exactly what changed, so they no longer pay for a remote scan.
 
 ## [0.0.17] - 2026-08-27
 
