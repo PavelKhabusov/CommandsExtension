@@ -10,6 +10,7 @@ your `package.json` scripts and `.ps1` files automatically — then run anything
 [![Marketplace](https://vsmarketplacebadges.dev/version/PavelKhabusov.commands-extension.svg?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![Installs](https://vsmarketplacebadges.dev/installs/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![Rating](https://vsmarketplacebadges.dev/rating-short/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension&ssr=false#review-details)
+![Version](https://img.shields.io/badge/version-0.0.17-4c9a4f)
 ![License](https://img.shields.io/badge/license-MIT-7ba7d4)
 
 ![VS Code](https://img.shields.io/badge/VS%20Code-extension-007ACC?logo=visualstudiocode&logoColor=white)
@@ -33,6 +34,8 @@ code --install-extension PavelKhabusov.commands-extension
 3. Click the **Commands** icon in the Activity Bar — done
 
 ---
+
+> 📚 **Detailed docs** live in [`docs/`](docs/): [Server Uploads](docs/server-uploads.md) · [Combined Operations](docs/combined-operations.md) · [Claude Hooks Manager](docs/claude-hooks.md).
 
 ## Features
 
@@ -96,126 +99,10 @@ Click **+** in the toolbar to add new commands without touching JSON. Pick an ex
 
 ### Server Uploads
 
-Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.json` and run them with one click — no FileZilla CLI required, works on Linux, macOS, and Windows.
-
-- **Live progress** — percentage, current file, transfer speed, files done / total
-- **Cancel mid-flight** — stop button on running uploads
-- **Files, folders, globs** — single files, recursive folder uploads, or glob patterns
-- **Per-upload `exclude`** — skip files inside an uploaded folder (e.g. `**/node_modules/**`)
-- **Shared `servers`** — define a server once, reference it from many uploads
-- **Interactive picker** — folder-with-plus button opens a native file/folder dialog and appends selections to the config
-- **`.local.json` by default** — the default filename is excluded by common gitignore patterns so credentials stay out of git
-
-```json
-{
-  "servers": [
-    {
-      "name": "main",
-      "protocol": "ftp",
-      "host": "example.com",
-      "port": 21,
-      "user": "username",
-      "password": "your-password"
-    }
-  ],
-  "uploads": [
-    {
-      "name": "Theme → prod",
-      "server": "main",
-      "remoteDir": "/public_html/wp-content/themes/mytheme/",
-      "items": ["./wp-content/themes/mytheme/"],
-      "exclude": ["**/node_modules/**", "**/*.log"],
-      "onExists": "overwrite"
-    },
-    {
-      "name": "Single file → prod",
-      "server": "main",
-      "remoteDir": "/public_html/",
-      "items": ["./bundle/app.js"]
-    }
-  ]
-}
-```
-
-#### `servers` entry
-
-| Field | Type | Required | Description |
-|-------|------|:--------:|-------------|
-| `name` | string | yes | Reference name used by uploads |
-| `protocol` | `"ftp"` \| `"ftps"` \| `"sftp"` | yes | Connection protocol |
-| `host` | string | yes | Server hostname or IP |
-| `port` | number | no | Defaults: 21 (FTP/FTPS), 22 (SFTP) |
-| `user` | string | yes | Username |
-| `password` | string | no | Password. If omitted, you'll be prompted at upload time (not saved) |
-
-#### `uploads` entry
-
-| Field | Type | Required | Description |
-|-------|------|:--------:|-------------|
-| `name` | string | yes | Display name in the UI |
-| `group` | string | no | Group name (default: `"Uploads"`) |
-| `server` | string | conditional | Reference to a `servers` entry. Required unless inline `host`/`user`/`protocol` are set |
-| `protocol` / `host` / `port` / `user` / `password` | — | conditional | Inline server fields (override or replace `server`) |
-| `remoteDir` | string | yes | Remote directory (absolute path) |
-| `items` | string[] | yes | Files, folders, or globs (relative to workspace root) |
-| `exclude` | string[] | no | Glob patterns to skip during folder/glob expansion |
-| `onExists` | `"overwrite"` \| `"skip"` | no | Behavior on file collision (default: `"overwrite"`) |
-
-Right-click an upload for context menu actions: edit config, add files.
-
-> **Passwords are stored in plain text inside `server-uploads.local.json`.** The default filename is `.local.json` so most gitignore presets exclude it. If you use a different filename, add it to `.gitignore` yourself.
-
-> **Proxy / VPN note:** uploads use raw TCP sockets; HTTP proxy settings (system or VS Code) are not applied. System-level VPN tunnels are honored transparently by the OS — bypassing them requires VPN-level split tunneling.
-
-### Quick Upload (untracked files → any server path)
-
-For one-off uploads of files that are **not** part of any configured upload (logos,
-icons, assets) into an **arbitrary** server directory — without editing
-`server-uploads.local.json`.
-
-**Header buttons** (Server Uploads section, appear on hover):
-
-- **⬆ Quick upload** — pick files (multi-select) **or** a whole folder → pick a
-  server (auto if only one) → browse the server's directories (FileZilla-style:
-  enter folders, `..` up, "Upload here", create new folder) or type the path
-  manually → uploaded. Folders keep their structure; single files land as
-  `remoteDir/<basename>`.
-- **✓ Mark all as synced** — mark every tracked upload as synced (clears
-  changed/new badges) without actually uploading anything.
-
-**Servers** are read from `server-uploads.local.json` (`servers[]` — same list
-used by regular uploads).
-
-#### Upload spec format (for humans and agents)
-
-There is a non-interactive command **`Commands Extension: Quick Upload from Spec`**
-that accepts a spec string, so an agent can generate a ready-to-run line and the
-user just pastes it. One pair per line:
-
-```
-<local file or folder>  =>  <serverName>:<remoteDir>
-```
-
-- **left** — absolute local path to a file or a folder (folder = recursive, keeps structure).
-- **`serverName`** — must match a `name` in `servers[]` of `server-uploads.local.json`.
-- **right of `:`** — target directory on the server.
-- Multiple pairs: separate by newline **or** `;` (the interactive input box is single-line, so use `;` when pasting several pairs there). Lines starting with `#` are ignored.
-
-Example:
-
-```
-/home/pavel/DEV/propress.ru/wp-content/themes/pro/img/logo-09-08.webm => dev-propress:/wp-content/themes/pro/img
-/home/pavel/Downloads/составные-части-иконки => dev-propress:/wp-content/themes/pro/img/constructor/parts
-```
-
-Run via Command Palette → "Quick Upload from Spec" (or programmatically:
-`commandsExtension.quickUploadFromSpec` with the spec string as the argument).
-
-> **For agents:** to hand the user a paste-ready upload, output a fenced block in
-> exactly the `local => serverName:/remote/dir` format above. Resolve `serverName`
-> from the project's `server-uploads.local.json` `servers[]` (e.g. `dev-propress`,
-> `propress`). Left side is a local file/folder path; right side is the server
-> directory. Do not invent server names.
+Per-project **FTP / FTPS / SFTP** upload targets in `server-uploads.local.json`, run
+with one click — live progress, cancel, mirror deploys, parallel transfers,
+`skipUnchanged`, badge-exact "Modified" uploads, and a Quick Upload for one-off
+files. **[Full reference → docs/server-uploads.md](docs/server-uploads.md).**
 
 ### Marketplace Templates
 
@@ -338,109 +225,17 @@ These appear as `npm run build`, `npm run test`, `npm run start`.
 
 ### Claude Hooks Manager
 
-Manage [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks)
-from the panel instead of editing `settings.json` by hand. The **Claude Hooks**
-section lists every hook found in:
-
-| File                             | Source label |
-|----------------------------------|--------------|
-| `.claude/settings.json`          | 📁 project (committed)             |
-| `.claude/settings.local.json`    | 🔒 local (gitignored)              |
-| `~/.claude/settings.json`        | 🌍 user-global (all your projects) |
-
-By default the section shows only **project** + **local** hooks — the ones
-actually scoped to this workspace. User-global hooks (shared across every
-project on your machine) are hidden behind the `🌍` toggle in the header
-to keep your project view focused. Toggle it on to also list them.
-
-Section header buttons (visible on hover):
-
-| Button | What it does |
-|--------|--------------|
-| `+`    | Open the editor to add a new hook                                              |
-| `📋`   | Paste a hook JSON from clipboard (opens the editor pre-filled)                |
-| `🌍`   | Toggle visibility of user-global hooks                                        |
-| `📂`   | Quick-open any of the three `settings.json` files (no hook needed)            |
-
-Each card has:
-- a **toggle switch** to disable / re-enable the hook (disabled hooks are
-  pulled out of `settings.json` and cached in workspace state; toggling on
-  restores them; the row stays in the same slot — ordering is stable across
-  toggles)
-- a **clickable script path** for hooks whose command points to a
-  `.sh` / `.py` / `.js` / etc. file (with `$CLAUDE_PROJECT_DIR` and `~/`
-  expansion) — click to open the script in the editor
-- a colored target pill (📁 blue / 🔒 yellow / 🌍 purple) — click to
-  open the underlying `settings.json`
-- right-click context menu: **Edit** / **Copy to clipboard** (as JSON) /
-  **Delete**
-
-The **+ Add hook** button opens an inline editor where you pick:
-1. **Event** — `Stop`, `SubagentStop`, `UserPromptSubmit`, `PreToolUse`,
-   `PostToolUse`, `Notification`, `SessionStart`, `SessionEnd`, `PreCompact`.
-   Each group shows a short description of when it fires.
-2. **Matcher** — optional regex, only relevant for the events that take one.
-3. **Target file** — project / local / user-global. Writes to user-global
-   ask for confirmation the first time.
-4. **Action**:
-   - **Preset** — `Play sound`, `Desktop notification`, `Append timestamp`,
-     `Wait N seconds`, `Open URL / file / app`. Each preset emits a
-     cross-platform shell command (see the table above; ⚠ icon flags
-     presets whose tool isn't detected on this OS).
-   - **Existing command** — pick one from `commands-list.json`. The
-     actual shell script is copied into the hook so you can tweak it
-     per-hook without affecting the original command.
-   - **Custom shell** — write whatever you want.
-5. **Shell script** — multi-line editable, even for presets/command refs.
-6. **Timeout** (optional, seconds).
-
-**Copy / paste across projects** — right-click → **Copy to clipboard** writes
-a small `{event,matcher,command,timeout}` JSON to the clipboard. In another
-project, hit the 📋 button in the **Claude Hooks** section header to open
-the editor pre-filled with the pasted spec.
+Manage [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) from
+the panel across project / local / user-global `settings.json` — toggle, edit, presets,
+copy/paste across projects. **[Full reference → docs/claude-hooks.md](docs/claude-hooks.md).**
 
 ---
 
 ### Combined Operations
 
-Bundle terminal commands, server uploads, and small helpers into a single
-ordered sequence. Each step in a combined operation can be:
-
-| Step type      | What it does                                                                       |
-|----------------|------------------------------------------------------------------------------------|
-| `command`      | Runs an existing command from `commands-list.json` / `package.json` / `*.ps1`. With Shell Integration enabled (default for bash/zsh/fish/pwsh/cmd) the runner waits for it to exit; if SI is unavailable, it falls back to fire-and-go. |
-| `upload`       | Runs a server upload by key (`<group>:<name>`), waits for completion.              |
-| `auto-upload`  | Picks the optimal upload set-cover for a server (`user@host`) — exactly what the recommended auto-upload card does locally. |
-| `vscode-cmd`   | Invokes any registered VS Code command (e.g. `workbench.action.reloadWindow`). Picker uses VS Code's native quickPick with fuzzy search over all 1000+ command IDs. |
-| `wait`         | `await sleep(seconds * 1000)` — internal pause, cancellable, no terminal.          |
-| `open`         | Opens a URL/file via `vscode.env.openExternal`; for `app` targets uses the OS shell (`gtk-launch` → binary fallback on Linux, `open -a` on macOS, `start ""` on Windows). |
-| `sound`        | Plays a short sound clip (complete / alert / error) — best-effort cross-platform. |
-| `notification` | Shows a VS Code notification (info / warn / error).                                |
-
-Combined operations live in the same `commands-list.json` under a new
-`combined` field. Edit them via the "+" button in the **Combined
-Operations** section of the panel: an inline editor opens with
-drag-to-reorder steps and an "Add step ▾" submenu (7 step types via
-VS Code's native input box / quick-pick prompts). Run from the card
-(click), cancel the running op via the same click; right-click for
-Run / Edit / Duplicate / Delete.
-
-Each card lists its steps with a per-step **checkbox** — quickly skip
-individual steps without removing them (e.g. include `command` and
-`upload` but skip the `notification`). State persists in
-`commands-list.json`.
-
-When a step is uploading, the card shows the step number ("Running
-2/3: …") and the standard upload progress bar inline.
-
-`stopOnError` (default `true`) — a failed step (upload error, non-zero
-exit code) skips the remaining steps. Toggle in the editor.
-
-**Common use case:** after a local install you want VS Code to pick up
-the new build. Bundle `npm run install-local` + `vscode-cmd:
-workbench.action.reloadWindow` into one "Install & Reload" operation —
-one click, both steps, and the window reloads right when the install
-finishes.
+Bundle terminal commands, server uploads, and helpers (wait / open / sound /
+notification / vscode-cmd) into one ordered, cancellable sequence defined in
+`commands-list.json`. **[Full reference → docs/combined-operations.md](docs/combined-operations.md).**
 
 ---
 
