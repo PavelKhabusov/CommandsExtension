@@ -7,6 +7,7 @@ import { TerminalManager } from './terminalManager';
 import { loadUploads, uploadKey, pickFilesAndAppend, addUploadItems, addUploadExcludes, pickExcludePatternsForUpload, ensureUploadsFile, resolveServer } from './uploadsProvider';
 import { uploadRunner, uploadStalenessTracker, StalenessInfo, combinedOpRunner } from './extension';
 import { UploadDefinition, ServerDefinition } from './uploadsTypes';
+import { getSqlTarget, openSqlConsole } from './sqlConsole';
 import { CombinedOpDefinition, CombinedOpProgress } from './combinedOpsTypes';
 import { getPresetAvailability, soundCommand, notificationCommand, openCommand } from './platformHelpers';
 import { loadAllHooks, saveHook, deleteHook, setHookEnabled, ALL_HOOK_EVENTS, MATCHER_EVENTS, HookEntry, HookEvent, HookTargetFile, getHookFilePaths } from './claudeHooksProvider';
@@ -348,6 +349,19 @@ export class WebviewMessageHandler {
 			}
 			case 'quickUploadFiles': {
 				void vscode.commands.executeCommand('commandsExtension.quickUploadFiles');
+				break;
+			}
+			case 'openSqlConsole': {
+				const targets = this._cachedServers
+					.map((s) => getSqlTarget(s))
+					.filter((t): t is NonNullable<typeof t> => t !== null);
+				if (!targets.length) {
+					vscode.window.showWarningMessage(
+						'Commands Extension: no server has an "sql" configuration (database, dbUser, dbPassword).'
+					);
+					return;
+				}
+				openSqlConsole(targets, this._context);
 				break;
 			}
 			case 'runAutoUpload': {
@@ -759,6 +773,14 @@ export async function sendCommandsToWebview(
 	const stalenessMap = uploadStalenessTracker ? uploadStalenessTracker.getStalenessMap() : {};
 	const marketplaceCollapsed = handler.getMarketplaceCollapsed();
 	const uploadsCollapsed = handler.getUploadsCollapsed();
+
+	// Servers that declare an `sql` block, keyed by the upload login shown in the
+	// group header. Only these get a database button, so servers without
+	// credentials configured look exactly as before.
+	const sqlServers = servers
+		.filter((s) => getSqlTarget(s))
+		.map((s) => ({ name: s.name, login: `${s.user}@${s.host}` }));
+
 	postMessage({
 		type: 'updateUploads',
 		groups: displayGroups,
@@ -766,6 +788,7 @@ export async function sendCommandsToWebview(
 		activeKeys,
 		uploadsCollapsed,
 		stalenessMap,
+		sqlServers,
 	});
 	postMessage({
 		type: 'updateSectionCollapse',

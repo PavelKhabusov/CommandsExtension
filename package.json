@@ -51,6 +51,11 @@
         "command": "commandsExtension.quickUploadFromSpec",
         "title": "Commands Extension: Quick Upload from Spec",
         "category": "Commands"
+      },
+      {
+        "command": "commandsExtension.runSqlFile",
+        "title": "Commands Extension: Run SQL File in Console",
+        "category": "Commands"
       }
     ],
     "menus": {
@@ -59,6 +64,11 @@
           "command": "commandsExtension.uploadFile",
           "when": "commandsExtension.hasServerUploads && !explorerResourceIsFolder",
           "group": "commandsExtension@1"
+        },
+        {
+          "command": "commandsExtension.runSqlFile",
+          "when": "commandsExtension.hasSqlServer && !explorerResourceIsFolder && resourceExtname == '.sql'",
+          "group": "commandsExtension@2"
         }
       ],
       "editor/context": [
@@ -66,6 +76,11 @@
           "command": "commandsExtension.uploadFile",
           "when": "commandsExtension.hasServerUploads && resourceScheme == 'file'",
           "group": "commandsExtension@1"
+        },
+        {
+          "command": "commandsExtension.runSqlFile",
+          "when": "commandsExtension.hasSqlServer && resourceScheme == 'file' && resourceExtname == '.sql'",
+          "group": "commandsExtension@2"
         }
       ],
       "editor/title/context": [
@@ -73,6 +88,11 @@
           "command": "commandsExtension.uploadFile",
           "when": "commandsExtension.hasServerUploads && resourceScheme == 'file'",
           "group": "commandsExtension@1"
+        },
+        {
+          "command": "commandsExtension.runSqlFile",
+          "when": "commandsExtension.hasSqlServer && resourceScheme == 'file' && resourceExtname == '.sql'",
+          "group": "commandsExtension@2"
         }
       ]
     },

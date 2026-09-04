@@ -1,0 +1,488 @@
+html, body {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	display: flex;
+	flex-direction: column;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-foreground);
+	font-family: var(--vscode-font-family);
+	font-size: var(--vscode-font-size);
+}
+
+#sql-head {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	padding: 8px 14px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+	flex-wrap: wrap;
+}
+
+.sql-title {
+	font-weight: 600;
+}
+
+.sql-target,
+.sql-source {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.sql-source {
+	margin-left: auto;
+	font-family: var(--vscode-editor-font-family);
+}
+
+#sql-server {
+	background: var(--vscode-dropdown-background);
+	color: var(--vscode-dropdown-foreground);
+	border: 1px solid var(--vscode-dropdown-border, transparent);
+	border-radius: 2px;
+	padding: 3px 6px;
+	font-family: inherit;
+	font-size: 12px;
+}
+
+#sql-tabs {
+	display: flex;
+	gap: 2px;
+	padding: 0 14px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+	background: var(--vscode-editorGroupHeader-tabsBackground, transparent);
+}
+
+.sql-tab {
+	background: transparent;
+	border: none;
+	border-bottom: 2px solid transparent;
+	color: var(--vscode-descriptionForeground);
+	padding: 8px 16px;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: inherit;
+	margin-bottom: -1px;
+}
+
+.sql-tab:hover:not(.active) {
+	color: var(--vscode-foreground);
+	background: var(--vscode-list-hoverBackground);
+}
+
+/* Active tab: underline plus a lifted background, so which pane is showing is
+   obvious at a glance. */
+.sql-tab.active {
+	color: var(--vscode-foreground);
+	font-weight: 600;
+	border-bottom-color: var(--vscode-focusBorder);
+	background: var(--vscode-editor-background);
+}
+
+/* Each pane fills the panel below the tab strip. */
+.sql-pane {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.sql-pane[hidden] {
+	display: none;
+}
+
+.sql-editor-wrap {
+	padding: 10px 14px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+/* Syntax highlight: a coloured <pre> sits under a transparent textarea, so
+   editing stays fully native. Both layers must share every metric exactly or
+   the text drifts apart. */
+#sql-editor {
+	position: relative;
+	background: var(--vscode-input-background);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 2px;
+}
+
+#sql-editor:focus-within {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+#sql-input,
+#sql-highlight {
+	margin: 0;
+	padding: 8px;
+	box-sizing: border-box;
+	width: 100%;
+	/* Roughly 18 lines: enough for a real migration without pushing results
+	   off screen. Still drag-resizable, and capped against the panel height. */
+	height: 300px;
+	min-height: 90px;
+	max-height: 55vh;
+	font-family: var(--vscode-editor-font-family);
+	font-size: var(--vscode-editor-font-size);
+	line-height: 1.5;
+	tab-size: 2;
+	white-space: pre-wrap;
+	word-break: break-word;
+	overflow-wrap: break-word;
+	border: 0;
+}
+
+/* Stretches to whatever height the textarea currently has, including after a
+   manual resize — hence inset rather than its own height. */
+#sql-highlight {
+	position: absolute;
+	inset: 0;
+	height: auto;
+	max-height: none;
+	overflow: hidden;
+	pointer-events: none;
+	color: var(--vscode-input-foreground);
+}
+
+#sql-input {
+	position: relative;
+	display: block;
+	resize: vertical;
+	background: transparent;
+	/* Transparent text with a visible caret: the colour comes from the layer
+	   underneath, but selection must still be legible. */
+	color: transparent;
+	caret-color: var(--vscode-editorCursor-foreground, var(--vscode-foreground));
+}
+
+#sql-input::selection {
+	background: var(--vscode-editor-selectionBackground);
+	color: transparent;
+}
+
+#sql-input:focus {
+	outline: none;
+}
+
+/* Token colours follow the theme's own syntax tokens where possible. */
+.tok-keyword {
+	color: var(--vscode-debugTokenExpression-name, #569cd6);
+	font-weight: 600;
+}
+
+.tok-func {
+	color: var(--vscode-charts-yellow, #dcdcaa);
+}
+
+.tok-type {
+	color: var(--vscode-charts-green, #4ec9b0);
+}
+
+.tok-string {
+	color: var(--vscode-charts-orange, #ce9178);
+}
+
+.tok-number {
+	color: var(--vscode-charts-purple, #b5cea8);
+}
+
+.tok-ident {
+	color: var(--vscode-charts-blue, #9cdcfe);
+}
+
+.tok-comment {
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+}
+
+.tok-op {
+	color: var(--vscode-foreground);
+	opacity: 0.75;
+}
+
+.sql-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+	flex-wrap: wrap;
+}
+
+.sql-bar button:not(.sql-toggle) {
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	border: none;
+	padding: 5px 16px;
+	border-radius: 2px;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: inherit;
+}
+
+.sql-bar button:not(.sql-toggle):hover:not(:disabled) {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.sql-bar button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.sql-bar button.sql-secondary {
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
+}
+
+.sql-bar button.sql-secondary:hover:not(:disabled) {
+	background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.sql-hint {
+	margin-left: auto;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+/* Schema / Data: a segmented control, not buttons — these pick what goes into
+   the dump, they don't start anything, so they must not read like Export.
+   At least one segment stays on, so the dump is never empty. */
+.sql-toggles {
+	display: inline-flex;
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 3px;
+	overflow: hidden;
+	margin-right: 4px;
+}
+
+.sql-toggle {
+	background: var(--vscode-input-background);
+	color: var(--vscode-descriptionForeground);
+	border: none;
+	padding: 5px 15px;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: inherit;
+}
+
+.sql-toggle + .sql-toggle {
+	border-left: 1px solid var(--vscode-panel-border);
+}
+
+.sql-toggle:hover:not(.active) {
+	color: var(--vscode-foreground);
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-toggle.active {
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+	font-weight: 600;
+}
+
+/* Off state stays legible — dimmed, but not mistakable for "disabled". */
+.sql-toggle:not(.active) {
+	opacity: 0.75;
+}
+
+/* Keyboard focus only — a mouse click must not leave a ring behind. */
+.sql-toggle:focus {
+	outline: none;
+}
+
+.sql-toggle:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -2px;
+}
+
+#sql-dest-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid var(--vscode-panel-border);
+	font-size: 12px;
+}
+
+#sql-dest-label {
+	color: var(--vscode-descriptionForeground);
+	flex-shrink: 0;
+}
+
+#sql-dest-path {
+	font-family: var(--vscode-editor-font-family);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+#sql-dest-path.sql-dest-empty {
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+	font-family: inherit;
+}
+
+#sql-dest-pick {
+	margin-left: auto;
+	flex-shrink: 0;
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
+	border: none;
+	padding: 4px 12px;
+	border-radius: 2px;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: 12px;
+}
+
+#sql-dest-pick:hover {
+	background: var(--vscode-button-secondaryHoverBackground);
+}
+
+#sql-output,
+#sql-export-output {
+	flex: 1;
+	overflow: auto;
+	padding: 12px 14px;
+}
+
+/* Key/value rows in the export summary. */
+#sql-export-output th {
+	font-weight: 500;
+	color: var(--vscode-descriptionForeground);
+	position: static;
+}
+
+.sql-empty,
+.sql-meta {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	margin-bottom: 8px;
+}
+
+.sql-msg {
+	padding: 8px 11px;
+	border-radius: 2px;
+	margin-bottom: 12px;
+	white-space: pre-wrap;
+	font-family: var(--vscode-editor-font-family);
+	font-size: 12px;
+}
+
+/* Row holding a standalone copy action (batch results, export summary). */
+.sql-actions {
+	display: flex;
+	gap: 6px;
+	margin-bottom: 10px;
+}
+
+/* Per-table header: label on the left, its copy button on the right. */
+.sql-set-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.sql-copy {
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 2px;
+	padding: 2px 9px;
+	font-family: inherit;
+	font-size: 11px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.sql-set-head .sql-copy {
+	margin-left: auto;
+}
+
+.sql-copy:hover {
+	background: var(--vscode-list-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.sql-copy.copied {
+	color: var(--vscode-terminal-ansiGreen, var(--vscode-foreground));
+	border-color: currentColor;
+}
+
+/* The error background and errorForeground are both red in most themes, so
+   using them together is unreadable. Colour carries in the left bar; the text
+   itself stays on the normal editor foreground. */
+.sql-error {
+	background: var(--vscode-editor-background);
+	border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+	border-left-width: 3px;
+	border-left-color: var(--vscode-errorForeground);
+	color: var(--vscode-foreground);
+}
+
+.sql-warn {
+	background: var(--vscode-editor-background);
+	border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-foreground));
+	border-left-width: 3px;
+	border-left-color: var(--vscode-editorWarning-foreground, #cca700);
+	color: var(--vscode-foreground);
+}
+
+.sql-ok {
+	color: var(--vscode-terminal-ansiGreen, var(--vscode-foreground));
+}
+
+.sql-table-wrap {
+	overflow-x: auto;
+	margin-bottom: 18px;
+}
+
+table {
+	border-collapse: collapse;
+	font-size: 12px;
+}
+
+th,
+td {
+	border: 1px solid var(--vscode-panel-border);
+	padding: 4px 9px;
+	text-align: left;
+	font-family: var(--vscode-editor-font-family);
+	max-width: 420px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+th {
+	background: var(--vscode-keybindingTable-headerBackground, var(--vscode-editor-background));
+	font-weight: 600;
+	position: sticky;
+	top: 0;
+}
+
+tr:nth-child(even) td {
+	background: var(--vscode-list-hoverBackground);
+}
+
+/* Long serialized values stay on one line; clicking a cell expands it.
+   Hover-to-expand would reflow the table while scrolling past it. */
+td {
+	cursor: default;
+}
+
+/* Expanded cell keeps the normal background — a filled highlight made the
+   text unreadable — and is marked by an accent bar instead. */
+td.expanded {
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-width: none;
+	box-shadow: inset 2px 0 0 var(--vscode-focusBorder);
+}
+
+.sql-null {
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+}

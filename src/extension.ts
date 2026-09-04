@@ -12,6 +12,7 @@ import { isPathInUploadScope, resolveItems, loadUploads, resolveServer, hashFile
 import { loadCommands, loadCombinedOps } from './commandsProvider';
 import { CombinedOpDefinition, CombinedOpProgress } from './combinedOpsTypes';
 import { CombinedOpRunner } from './combinedOpRunner';
+import { getSqlTarget, openSqlConsole } from './sqlConsole';
 
 type ProgressListener = (p: UploadProgress) => void;
 
@@ -841,13 +842,67 @@ async function publishCommandsToExternalApi(
  */
 async function refreshServerUploadsContext(workspaceRoot: string, uploadsFile: string): Promise<void> {
   let hasUploads = false;
+  let hasSqlServer = false;
   try {
-    const { groups } = await loadUploads(workspaceRoot, uploadsFile);
+    const { groups, servers } = await loadUploads(workspaceRoot, uploadsFile);
     hasUploads = groups.some((g) => g.uploads.length > 0);
+    hasSqlServer = servers.some((s) => getSqlTarget(s) !== null);
   } catch {
     hasUploads = false;
+    hasSqlServer = false;
   }
   await vscode.commands.executeCommand('setContext', 'commandsExtension.hasServerUploads', hasUploads);
+  await vscode.commands.executeCommand('setContext', 'commandsExtension.hasSqlServer', hasSqlServer);
+}
+
+/**
+ * Right-click handler for .sql files: opens the SQL console with the file's
+ * contents loaded into the Query tab. Nothing is executed — the script is put
+ * in front of you to review and run yourself.
+ */
+async function openSqlFileInConsole(
+  context: vscode.ExtensionContext,
+  resource?: vscode.Uri
+): Promise<void> {
+  const uri = resource ?? vscode.window.activeTextEditor?.document.uri;
+  if (!uri) {
+    vscode.window.showWarningMessage('Commands Extension: no SQL file to open.');
+    return;
+  }
+
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!root) return;
+
+  const { servers } = await loadUploads(root, quickUploadsFileName());
+  const targets = servers
+    .map((s) => getSqlTarget(s))
+    .filter((t): t is NonNullable<typeof t> => t !== null);
+
+  if (!targets.length) {
+    vscode.window.showWarningMessage(
+      'Commands Extension: no server has an "sql" configuration (database, dbUser, dbPassword).'
+    );
+    return;
+  }
+
+  // Prefer unsaved editor content over what is on disk, so edits in flight are
+  // what lands in the console.
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+  let sql: string;
+  if (open) {
+    sql = open.getText();
+  } else {
+    try {
+      sql = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+    } catch (e) {
+      vscode.window.showErrorMessage(
+        `Commands Extension: cannot read ${path.basename(uri.fsPath)}: ${e instanceof Error ? e.message : e}`
+      );
+      return;
+    }
+  }
+
+  openSqlConsole(targets, context, sql);
 }
 
 /**
@@ -1582,6 +1637,12 @@ export function activate(context: vscode.ExtensionContext): void {
     (spec?: string) => { void quickUploadFromSpec(spec); }
   );
   context.subscriptions.push(quickUploadSpecCommand);
+
+  const runSqlFileCommand = vscode.commands.registerCommand(
+    'commandsExtension.runSqlFile',
+    (resource?: vscode.Uri) => { void openSqlFileInConsole(context, resource); }
+  );
+  context.subscriptions.push(runSqlFileCommand);
 
   const sidebarProvider = new CommandsSidebarProvider(context.extensionUri, context);
   const sidebarRegistration = vscode.window.registerWebviewViewProvider(

@@ -28,6 +28,8 @@
 	/** @type {Set<string>} */
 	const uploadActiveKeys = new Set();
 	let lastUploadGroups = /** @type {any[]} */ ([]);
+	// Servers with an `sql` block — only these get a database button in the header.
+	let sqlServers = /** @type {Array<{name: string, login: string}>} */ ([]);
 	let marketplaceCollapsed = /** @type {boolean | undefined} */ (undefined);
 	let uploadsCollapsed = /** @type {boolean | undefined} */ (undefined);
 	// Combined Operations state
@@ -315,6 +317,7 @@
 				break;
 			case 'updateUploads':
 				lastUploadGroups = message.groups || [];
+				sqlServers = Array.isArray(message.sqlServers) ? message.sqlServers : [];
 				if (Array.isArray(message.statuses)) {
 					uploadStatusMap.clear();
 					for (const s of message.statuses) {
@@ -1330,6 +1333,22 @@
 			vscode.postMessage({ type: 'quickUploadFiles' });
 		});
 		header.appendChild(quickBtn);
+
+		// SQL console — shown only when at least one server declares an "sql"
+		// block. The panel itself switches between servers when there are several.
+		if (sqlServers.length) {
+			const sqlBtn = document.createElement('button');
+			sqlBtn.className = 'uploads-edit-btn';
+			sqlBtn.title = sqlServers.length === 1
+				? 'Open SQL console (' + sqlServers[0].login + ')'
+				: 'Open SQL console (' + sqlServers.length + ' servers)';
+			sqlBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><ellipse cx="8" cy="3.6" rx="5" ry="2.1"/><path d="M3 3.6v8.8c0 1.16 2.24 2.1 5 2.1s5-.94 5-2.1V3.6"/><path d="M3 8c0 1.16 2.24 2.1 5 2.1s5-.94 5-2.1"/></svg>';
+			sqlBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				vscode.postMessage({ type: 'openSqlConsole' });
+			});
+			header.appendChild(sqlBtn);
+		}
 
 		// Mark all as synced: сбросить индикацию изменённых/новых у всех uploads.
 		if (totalCount > 0) {

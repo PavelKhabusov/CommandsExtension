@@ -7,6 +7,9 @@ covers the overview, quick start, `commands-list.json` format, and configuration
   `servers` / `uploads` config, mirror deploys, parallel transfers,
   `skipUnchanged`, snapshot-based "Modified" uploads, Quick Upload, and the
   upload-spec format for agents.
+- **[SQL Console](sql-console.md)** — query and export a remote database over
+  SSH from a panel: the `sql` server block, the Query and Export tabs, and how
+  dumps are verified.
 - **[Combined Operations](combined-operations.md)** — bundle commands, uploads,
   and helpers into one ordered, cancellable sequence.
 - **[Claude Hooks Manager](claude-hooks.md)** — manage Claude Code hooks from the

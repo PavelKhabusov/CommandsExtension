@@ -14,7 +14,24 @@
       "host": "staging.example.com",
       "port": 22,
       "user": "deploy",
-      "password": "another-password"
+      "password": "another-password",
+
+      "//sql": [
+        "Optional. Adding an 'sql' block shows a database button in this",
+        "server's header that opens an SQL console running queries over SSH.",
+        "Requires SSH access to the host and your public key installed there:",
+        "  ssh-copy-id deploy@staging.example.com",
+        "database, dbUser and dbPassword are required; without them no button",
+        "is shown. dbHost is the database as seen from the server itself."
+      ],
+      "sql": {
+        "database": "myapp",
+        "dbUser": "myapp_user",
+        "dbPassword": "db-password",
+        "dbHost": "localhost",
+        "sshUser": "deploy",
+        "sshPort": 22
+      }
     }
   ],
   "uploads": [

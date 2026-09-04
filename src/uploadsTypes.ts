@@ -1,5 +1,26 @@
 export type UploadProtocol = 'ftp' | 'ftps' | 'sftp';
 
+/**
+ * Optional SQL console settings for a server. When present, the server header
+ * shows a database button that opens an SQL console running queries over SSH.
+ */
+export interface ServerSqlConfig {
+  /** Database name. */
+  database: string;
+  /** Database user. */
+  dbUser: string;
+  /** Database password. */
+  dbPassword: string;
+  /** Database host as seen from the server itself. Defaults to localhost. */
+  dbHost?: string;
+  /** SSH host; defaults to the server's `host`. */
+  sshHost?: string;
+  /** SSH user; defaults to the server's `user`. */
+  sshUser?: string;
+  /** SSH port; defaults to 22. */
+  sshPort?: number;
+}
+
 export interface ServerDefinition {
   name: string;
   protocol: UploadProtocol;
@@ -7,6 +28,8 @@ export interface ServerDefinition {
   port?: number;
   user: string;
   password?: string;
+  /** Enables the SQL console button for this server. */
+  sql?: ServerSqlConfig;
 }
 
 export interface UploadDefinition {

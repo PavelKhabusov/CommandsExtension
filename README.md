@@ -35,7 +35,7 @@ code --install-extension PavelKhabusov.commands-extension
 
 ---
 
-> 📚 **Detailed docs** live in [`docs/`](docs/): [Server Uploads](docs/server-uploads.md) · [Combined Operations](docs/combined-operations.md) · [Claude Hooks Manager](docs/claude-hooks.md).
+> 📚 **Detailed docs** live in [`docs/`](docs/): [Server Uploads](docs/server-uploads.md) · [SQL Console](docs/sql-console.md) · [Combined Operations](docs/combined-operations.md) · [Claude Hooks Manager](docs/claude-hooks.md).
 
 ## Features
 
@@ -263,6 +263,22 @@ some Linux setups (servers, minimal distros) need extras.
 The editor's "Add step ▾" submenu shows a ⚠ icon next to presets
 whose underlying tool isn't detected on the current OS, with a tooltip
 hint about what to install.
+
+---
+
+## SQL Console
+
+Give a server an `sql` block in `server-uploads.local.json` and the Server
+Uploads header gains a **database button** opening a console panel with two
+tabs: **Query** (a phpMyAdmin-style box — `Ctrl+Enter`, one result table per
+statement, full MySQL errors) and **Export** (dump the database as full, schema
+only or data only, with live progress).
+
+Queries and dumps run **on the server over SSH**, not from your machine — over
+the internet every client round-trip costs network latency, so the same dump
+takes seconds server-side instead of minutes. Needs SSH access and your key
+installed (`ssh-copy-id user@host`).
+**[Full reference → docs/sql-console.md](docs/sql-console.md).**
 
 ---
 
