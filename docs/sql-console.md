@@ -10,6 +10,8 @@ button.
   line
 - **Copy results** — per-table and whole-batch copy buttons emit markdown
   tables, ready to paste into a chat or an issue
+- **Browse tab** — pick a table and page through it, with server-side search,
+  click-to-sort headers and a 25/50/100/250/500 page size
 - **Export tab** — dump the database as full, schema only or data only, with
   live progress and a summary
 - **Runs on the server over SSH** — `mysqldump` and `gzip` included, so only
@@ -38,8 +40,12 @@ hosting panel's own export feels instant while a local client crawls.
    ssh-copy-id user@example.com
    ```
 
-   Connections use `BatchMode`: if the key is missing, the console reports a
-   connection error instead of hanging on an invisible password prompt.
+   Connections use `BatchMode`: if the key is missing, the console reports the
+   error instead of hanging on an invisible password prompt — and prints the
+   `ssh-copy-id` line for that exact login so it can be pasted into a terminal.
+   The same applies to an unresolvable host, a refused connection, a changed
+   host key (`ssh-keygen -R …`) and rejected database credentials, which are
+   called out as database rather than SSH credentials.
 3. The `mysql` and `mysqldump` clients on the server — present on virtually
    every LAMP host.
 
@@ -129,6 +135,25 @@ Result 1 — 2 row(s)
 `NULL` is written literally rather than as an empty cell, embedded newlines are
 flattened and `|` is escaped, so a pasted table renders correctly. Failed
 queries offer **Copy error**, and a finished export offers **Copy summary**.
+
+## Browse tab
+
+Pick a table from the dropdown (each shows its approximate row count) and page
+through its rows.
+
+- **Search** filters **on the server across every column**, so it covers the
+  whole table rather than the rows currently on screen — a match on page 40 of
+  a 20 000-row table is found.
+- **Click a column header** to sort by it; click again to flip direction. Only a
+  real column name ever reaches `ORDER BY`.
+- **Page size** is 25 by default, up to 500. The first/previous/next/last
+  buttons and the page number box move between pages.
+- **Copy page** emits the visible rows as a markdown table, like the Query tab.
+- Cells behave as they do in query results: click to expand, double-click to
+  select the whole value.
+
+The table and page size are remembered, so reopening the console returns you to
+what you were looking at.
 
 ## Export tab
 

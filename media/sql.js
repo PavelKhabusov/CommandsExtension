@@ -16,6 +16,20 @@
 	const destPath = /** @type {HTMLElement} */ (document.getElementById('sql-dest-path'));
 	const destPick = /** @type {HTMLButtonElement} */ (document.getElementById('sql-dest-pick'));
 
+	const tableSel = /** @type {HTMLSelectElement} */ (document.getElementById('sql-table'));
+	const searchInput = /** @type {HTMLInputElement} */ (document.getElementById('sql-search'));
+	const searchBtn = /** @type {HTMLButtonElement} */ (document.getElementById('sql-search-run'));
+	const browseOut = /** @type {HTMLElement} */ (document.getElementById('sql-browse-output'));
+	const pager = /** @type {HTMLElement} */ (document.getElementById('sql-pager'));
+	const pagerInfo = /** @type {HTMLElement} */ (document.getElementById('sql-pager-info'));
+	const prevBtn = /** @type {HTMLButtonElement} */ (document.getElementById('sql-prev'));
+	const nextBtn = /** @type {HTMLButtonElement} */ (document.getElementById('sql-next'));
+	const firstBtn = /** @type {HTMLButtonElement} */ (document.getElementById('sql-first'));
+	const lastBtn = /** @type {HTMLButtonElement} */ (document.getElementById('sql-last'));
+	const pageInput = /** @type {HTMLInputElement} */ (document.getElementById('sql-page'));
+	const pagesLabel = /** @type {HTMLElement} */ (document.getElementById('sql-pages'));
+	const limitSel = /** @type {HTMLSelectElement} */ (document.getElementById('sql-limit'));
+
 	let requestId = 0;
 	let pending = 0;
 	let exporting = false;
@@ -26,6 +40,7 @@
 	if (!hasPreset && typeof saved.sql === 'string') input.value = saved.sql;
 	if (saved.server && serverSel) serverSel.value = saved.server;
 	if (saved.tab) selectTab(saved.tab);
+	if (saved.limit) limitSel.value = saved.limit;
 	// At least one of the two must stay on, so an empty pair means "both".
 	if (saved.includeSchema === false || saved.includeData === false) {
 		setToggle(toggleSchema, saved.includeSchema !== false);
@@ -38,6 +53,8 @@
 			server: serverSel ? serverSel.value : undefined,
 			includeSchema: isOn(toggleSchema),
 			includeData: isOn(toggleData),
+			table: tableSel.value,
+			limit: limitSel.value,
 			tab: currentTab(),
 		});
 	}
@@ -337,6 +354,163 @@
 		}
 	});
 
+	// ---- browse -------------------------------------------------------------
+
+	let browseOffset = 0;
+	let browseTotal = 0;
+	let browseReq = 0;
+	let browseSort = null; // {column, direction}
+
+	function pageSize() {
+		return parseInt(limitSel.value, 10) || 25;
+	}
+
+	function loadTables() {
+		vscode.postMessage({ type: 'listTables' });
+	}
+
+	function requestPage(offset) {
+		const table = tableSel.value;
+		if (!table) return;
+		browseOffset = Math.max(0, offset);
+		browseReq++;
+		browseOut.innerHTML = '<div class="sql-meta">Loading…</div>';
+		vscode.postMessage({
+			type: 'browse',
+			table,
+			offset: browseOffset,
+			limit: pageSize(),
+			search: searchInput.value.trim(),
+			sort: browseSort,
+			server: currentServer(),
+			requestId: browseReq,
+		});
+	}
+
+	function renderBrowse(msg) {
+		if (msg.requestId !== browseReq) return;
+
+		if (!msg.ok) {
+			browseOut.innerHTML = '';
+			const box = document.createElement('div');
+			box.className = 'sql-msg sql-error';
+			box.textContent = msg.error || 'Could not read the table.';
+			browseOut.appendChild(box);
+			pager.hidden = true;
+			return;
+		}
+
+		browseTotal = msg.total || 0;
+		browseOut.innerHTML = '';
+
+		if (!msg.rows.length) {
+			const empty = document.createElement('div');
+			empty.className = 'sql-empty';
+			empty.textContent = searchInput.value.trim()
+				? 'Nothing matches that search.'
+				: 'This table is empty.';
+			browseOut.appendChild(empty);
+			pager.hidden = true;
+			return;
+		}
+
+		const head = document.createElement('div');
+		head.className = 'sql-meta sql-set-head';
+		const label = document.createElement('span');
+		label.textContent = browseTotal + ' row(s)' + (searchInput.value.trim() ? ' matching' : ' in table');
+		head.appendChild(label);
+		head.appendChild(makeCopyBtn('Copy page', 'Copy this page as markdown', () =>
+			setToText({ columns: msg.columns, rows: msg.rows })
+		));
+		browseOut.appendChild(head);
+
+		const wrap = document.createElement('div');
+		wrap.className = 'sql-table-wrap';
+		const html = ['<table><thead><tr>'];
+		msg.columns.forEach((c) => {
+			// Clicking a header sorts by it; clicking the sorted one flips direction.
+			const active = browseSort && browseSort.column === c;
+			const arrow = active ? (browseSort.direction === 'asc' ? ' ▲' : ' ▼') : '';
+			html.push(
+				'<th class="sql-sortable' + (active ? ' sorted' : '') + '" data-col="' + escapeHtml(c) + '">' +
+				escapeHtml(c) + '<span class="sql-arrow">' + arrow + '</span></th>'
+			);
+		});
+		html.push('</tr></thead><tbody>');
+		msg.rows.forEach((row) => {
+			html.push('<tr>');
+			row.forEach((cell) => {
+				html.push(cell === null
+					? '<td class="sql-null">NULL</td>'
+					: '<td>' + escapeHtml(cell) + '</td>');
+			});
+			html.push('</tr>');
+		});
+		html.push('</tbody></table>');
+		wrap.innerHTML = html.join('');
+		browseOut.appendChild(wrap);
+
+		wrap.querySelectorAll('th.sql-sortable').forEach((th) => {
+			th.addEventListener('click', () => {
+				const col = th.getAttribute('data-col');
+				browseSort = browseSort && browseSort.column === col
+					? { column: col, direction: browseSort.direction === 'asc' ? 'desc' : 'asc' }
+					: { column: col, direction: 'asc' };
+				requestPage(0);
+			});
+		});
+
+		updatePager(msg.rows.length);
+	}
+
+	function updatePager(rowsOnPage) {
+		const size = pageSize();
+		const pages = Math.max(1, Math.ceil(browseTotal / size));
+		const current = Math.floor(browseOffset / size) + 1;
+		const from = browseOffset + 1;
+		const to = Math.min(browseOffset + rowsOnPage, browseTotal);
+
+		pageInput.value = String(current);
+		pageInput.max = String(pages);
+		pagesLabel.textContent = String(pages);
+		pagerInfo.textContent = from + '–' + to + ' of ' + browseTotal;
+
+		firstBtn.disabled = prevBtn.disabled = current <= 1;
+		nextBtn.disabled = lastBtn.disabled = current >= pages;
+		pager.hidden = false;
+	}
+
+	function gotoPage(n) {
+		const size = pageSize();
+		const pages = Math.max(1, Math.ceil(browseTotal / size));
+		const clamped = Math.min(Math.max(1, n), pages);
+		requestPage((clamped - 1) * size);
+	}
+
+	tableSel.addEventListener('change', () => {
+		searchInput.value = '';
+		browseSort = null; // a new table has different columns
+		requestPage(0);
+		persist();
+	});
+
+	searchBtn.addEventListener('click', () => requestPage(0));
+	searchInput.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter') { e.preventDefault(); requestPage(0); }
+	});
+
+	limitSel.addEventListener('change', () => { requestPage(0); persist(); });
+
+	firstBtn.addEventListener('click', () => gotoPage(1));
+	prevBtn.addEventListener('click', () => requestPage(browseOffset - pageSize()));
+	nextBtn.addEventListener('click', () => requestPage(browseOffset + pageSize()));
+	lastBtn.addEventListener('click', () => gotoPage(Math.ceil(browseTotal / pageSize())));
+
+	pageInput.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter') { e.preventDefault(); gotoPage(parseInt(pageInput.value, 10) || 1); }
+	});
+	pageInput.addEventListener('change', () => gotoPage(parseInt(pageInput.value, 10) || 1));
+
 	// ---- export -------------------------------------------------------------
 
 	function isOn(btn) {
@@ -541,6 +715,27 @@
 			output.innerHTML = '<div class="sql-empty">Press Run to execute.</div>';
 			return;
 		}
+		if (msg.type === 'tables') {
+			if (!msg.ok) {
+				tableSel.innerHTML = '<option value="">Could not list tables</option>';
+				return;
+			}
+			const wanted = saved.table || '';
+			tableSel.innerHTML = '<option value="">Select a table…</option>' +
+				msg.tables.map((t) =>
+					'<option value="' + escapeHtml(t.name) + '">' +
+					escapeHtml(t.name) + ' (~' + t.rows + ')</option>'
+				).join('');
+			if (wanted && msg.tables.some((t) => t.name === wanted)) {
+				tableSel.value = wanted;
+				requestPage(0);
+			}
+			return;
+		}
+		if (msg.type === 'browseResult') {
+			renderBrowse(msg);
+			return;
+		}
 		if (msg.type === 'exportDir') {
 			destPath.textContent = msg.dir || "Not set — you'll be asked once";
 			destPath.title = msg.dir || 'Folder where dumps are written';
@@ -557,5 +752,6 @@
 	});
 
 	paintHighlight();
+	loadTables();
 	input.focus();
 })();

@@ -170,6 +170,83 @@ export interface QueryOutcome {
   ms: number;
 }
 
+/**
+ * Turns a raw ssh failure into something actionable: the common ones are
+ * fixable with a single command, so spell that command out instead of leaving
+ * the developer with "Permission denied (publickey,password)".
+ */
+function explainSshFailure(target: SqlTarget, message: string): string | null {
+  const login = `${target.sshUser}@${target.sshHost}`;
+  const port = target.sshPort !== 22 ? ` -p ${target.sshPort}` : '';
+
+  if (/Permission denied|Too many authentication failures|no mutual signature/i.test(message)) {
+    return [
+      `The server refused the key for ${login}.`,
+      '',
+      'Install your public key there (it asks for the account password once):',
+      `  ssh-copy-id${port} ${login}`,
+      '',
+      'Then check that a plain login works:',
+      `  ssh${port} ${login}`,
+    ].join('\n');
+  }
+
+  if (/Could not resolve hostname|Name or service not known|nodename nor servname/i.test(message)) {
+    return [
+      `Cannot resolve ${target.sshHost}.`,
+      '',
+      'Check the host in the server\'s "sql" block (or its sshHost) in server-uploads.local.json.',
+    ].join('\n');
+  }
+
+  if (/Connection refused|Connection timed out|Operation timed out|No route to host/i.test(message)) {
+    return [
+      `No SSH service answered on ${target.sshHost}:${target.sshPort}.`,
+      '',
+      'Enable SSH access for the hosting account, or set "sshPort" if it listens elsewhere.',
+      'Verify with:',
+      `  ssh${port} ${login}`,
+    ].join('\n');
+  }
+
+  if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(message)) {
+    return [
+      `The host key for ${target.sshHost} does not match the one already trusted.`,
+      '',
+      'If the server was legitimately rebuilt, drop the stale entry and connect once to accept the new key:',
+      `  ssh-keygen -R ${target.sshHost}`,
+      `  ssh${port} ${login}`,
+    ].join('\n');
+  }
+
+  if (/mysql: (command )?not found|mysqldump: (command )?not found/i.test(message)) {
+    return [
+      'The MySQL client is missing on the server.',
+      '',
+      `Check what is available there:  ssh${port} ${login} 'which mysql mysqldump'`,
+    ].join('\n');
+  }
+
+  if (/Access denied for user/i.test(message)) {
+    return [
+      'MySQL rejected the database credentials.',
+      '',
+      'Check "database", "dbUser" and "dbPassword" in the server\'s "sql" block',
+      'in server-uploads.local.json — these are the database\'s own credentials,',
+      'not the SSH login.',
+    ].join('\n');
+  }
+
+  return null;
+}
+
+/** Appends the actionable hint to a raw failure message, when there is one. */
+function withSshHint(target: SqlTarget, message: string, fallback: string): string {
+  const raw = message || fallback;
+  const hint = explainSshFailure(target, raw);
+  return hint ? `${raw}\n\n${hint}` : raw;
+}
+
 const SSH_NOISE =
   /post-quantum|store now, decrypt later|may need to be upgraded|^\*\*|Welcome to|Using a password|^Warning: Permanently added/;
 
@@ -214,7 +291,7 @@ export function runQuery(target: SqlTarget, sql: string): Promise<QueryOutcome> 
       if (code !== 0) {
         resolve({
           ok: false,
-          error: message || `Query failed (exit code ${code}).`,
+          error: withSshHint(target, message, `Query failed (exit code ${code}).`),
           ms,
         });
         return;
@@ -230,6 +307,116 @@ export function runQuery(target: SqlTarget, sql: string): Promise<QueryOutcome> 
 /** Verifies the SSH connection and reports which database would be used. */
 export function probeConnection(target: SqlTarget): Promise<QueryOutcome> {
   return runQuery(target, 'SELECT DATABASE() AS `database`, VERSION() AS `version`');
+}
+
+/** Quotes an identifier for SQL: `tbl` → \`tbl\`, backticks doubled. */
+function qid(name: string): string {
+  return '`' + String(name).replace(/`/g, '``') + '`';
+}
+
+/** Quotes a string literal for SQL, escaping what MySQL treats specially. */
+function qlit(value: string): string {
+  return `'${String(value).replace(/[\\'"\0\n\r\x1a]/g, (c) => {
+    switch (c) {
+      case '\\': return '\\\\';
+      case `'`: return `\\'`;
+      case '"': return '\\"';
+      case '\0': return '\\0';
+      case '\n': return '\\n';
+      case '\r': return '\\r';
+      default: return '\\Z';
+    }
+  })}'`;
+}
+
+export interface TableInfo {
+  name: string;
+  rows: number;
+}
+
+/** Lists the database's tables with their approximate row counts. */
+export async function listTables(target: SqlTarget): Promise<{ ok: boolean; tables?: TableInfo[]; error?: string }> {
+  const r = await runQuery(
+    target,
+    `SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+     ORDER BY TABLE_NAME`
+  );
+  if (!r.ok) return { ok: false, error: r.error };
+  const set = r.sets?.[0];
+  return {
+    ok: true,
+    tables: (set?.rows ?? []).map((row) => ({
+      name: row[0] ?? '',
+      rows: Number(row[1] ?? 0),
+    })),
+  };
+}
+
+export interface BrowsePage {
+  ok: boolean;
+  columns?: string[];
+  rows?: (string | null)[][];
+  total?: number;
+  offset?: number;
+  error?: string;
+}
+
+/**
+ * Reads one page of a table. A search term filters on the server across every
+ * column, so it covers the whole table rather than the rows already fetched.
+ */
+export async function browseTable(
+  target: SqlTarget,
+  table: string,
+  offset: number,
+  limit: number,
+  search: string,
+  sort?: { column: string; direction: 'asc' | 'desc' }
+): Promise<BrowsePage> {
+  const cols = await runQuery(
+    target,
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${qlit(table)}
+     ORDER BY ORDINAL_POSITION`
+  );
+  if (!cols.ok) return { ok: false, error: cols.error };
+
+  const columns = (cols.sets?.[0]?.rows ?? []).map((r) => r[0] ?? '');
+  if (!columns.length) return { ok: false, error: `Table ${table} not found.` };
+
+  // CONVERT(... USING utf8mb4) keeps LIKE working over binary/blob columns.
+  const where = search
+    ? 'WHERE ' +
+      columns
+        .map((c) => `CONVERT(${qid(c)} USING utf8mb4) LIKE ${qlit('%' + search + '%')}`)
+        .join(' OR ')
+    : '';
+
+  // Only a real column name can reach ORDER BY, so a crafted sort cannot
+  // inject SQL.
+  const orderBy =
+    sort && columns.includes(sort.column)
+      ? `ORDER BY ${qid(sort.column)} ${sort.direction === 'desc' ? 'DESC' : 'ASC'}`
+      : '';
+
+  const t = qid(table);
+  const r = await runQuery(
+    target,
+    `SELECT COUNT(*) AS total FROM ${t} ${where};
+     SELECT * FROM ${t} ${where} ${orderBy} LIMIT ${Math.max(1, Math.min(500, limit))} OFFSET ${Math.max(0, offset)}`
+  );
+  if (!r.ok) return { ok: false, error: r.error };
+
+  const totalSet = r.sets?.[0];
+  const dataSet = r.sets?.[1];
+  return {
+    ok: true,
+    columns: dataSet?.columns ?? columns,
+    rows: dataSet?.rows ?? [],
+    total: Number(totalSet?.rows?.[0]?.[0] ?? 0),
+    offset,
+  };
 }
 
 export type ExportMode = 'full' | 'schema' | 'data';
@@ -333,7 +520,7 @@ MYSQL_PWD=${sq(cfg.dbPassword)} mysqldump -h ${sq(cfg.dbHost ?? 'localhost')} -u
 
         if (code !== 0 || bytes === 0) {
           fs.promises.unlink(destination).catch(() => undefined);
-          resolve({ ok: false, error: message || `Dump failed (exit code ${code}).` });
+          resolve({ ok: false, error: withSshHint(target, message, `Dump failed (exit code ${code}).`) });
           return;
         }
 
@@ -458,6 +645,27 @@ export function openSqlConsole(
       return;
     }
 
+    if (msg?.type === 'listTables') {
+      const r = await listTables(target);
+      panel.webview.postMessage({ type: 'tables', ...r });
+      return;
+    }
+
+    if (msg?.type === 'browse') {
+      const r = await browseTable(
+        target,
+        String(msg.table ?? ''),
+        Number(msg.offset ?? 0),
+        Number(msg.limit ?? 25),
+        String(msg.search ?? ''),
+        msg.sort?.column
+          ? { column: String(msg.sort.column), direction: msg.sort.direction === 'desc' ? 'desc' : 'asc' }
+          : undefined
+      );
+      panel.webview.postMessage({ type: 'browseResult', requestId: msg.requestId, table: msg.table, ...r });
+      return;
+    }
+
     if (msg?.type === 'pickExportDir') {
       const dir = await promptForExportDir(context);
       if (dir) panel.webview.postMessage({ type: 'exportDir', dir });
@@ -579,6 +787,7 @@ function renderHtml(
 
   <nav id="sql-tabs">
     <button class="sql-tab active" data-tab="query">Query</button>
+    <button class="sql-tab" data-tab="browse">Browse</button>
     <button class="sql-tab" data-tab="export">Export</button>
   </nav>
 
@@ -597,6 +806,35 @@ function renderHtml(
       </div>
     </div>
     <div id="sql-output"><div class="sql-empty">Enter a query and press Run.</div></div>
+  </div>
+
+  <div class="sql-pane" data-pane="browse" hidden>
+    <div class="sql-editor-wrap">
+      <div class="sql-bar">
+        <select id="sql-table" title="Table to browse"><option value="">Loading tables…</option></select>
+        <input type="search" id="sql-search" placeholder="Search all rows…" spellcheck="false">
+        <button id="sql-search-run">Search</button>
+        <span class="sql-hint">Searches the whole table on the server, not just this page</span>
+      </div>
+    </div>
+    <div id="sql-browse-output"><div class="sql-empty">Pick a table to browse.</div></div>
+    <div id="sql-pager" hidden>
+      <button id="sql-first" title="First page">&laquo;</button>
+      <button id="sql-prev" title="Previous page">&lsaquo;</button>
+      <span class="sql-pager-page">Page
+        <input type="number" id="sql-page" min="1" value="1"> of <span id="sql-pages">1</span>
+      </span>
+      <button id="sql-next" title="Next page">&rsaquo;</button>
+      <button id="sql-last" title="Last page">&raquo;</button>
+      <select id="sql-limit" title="Rows per page">
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="250">250</option>
+        <option value="500">500</option>
+      </select>
+      <span id="sql-pager-info"></span>
+    </div>
   </div>
 
   <div class="sql-pane" data-pane="export" hidden>

@@ -296,6 +296,127 @@ body {
 	outline-offset: -2px;
 }
 
+#sql-table {
+	background: var(--vscode-dropdown-background);
+	color: var(--vscode-dropdown-foreground);
+	border: 1px solid var(--vscode-dropdown-border, transparent);
+	border-radius: 2px;
+	padding: 4px 6px;
+	font-family: inherit;
+	font-size: 12px;
+	max-width: 320px;
+}
+
+#sql-search {
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 2px;
+	padding: 4px 8px;
+	font-family: inherit;
+	font-size: 12px;
+	min-width: 200px;
+}
+
+#sql-search:focus {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+#sql-browse-output {
+	flex: 1;
+	overflow: auto;
+	padding: 12px 14px;
+}
+
+/* Pager sits below the rows, out of the scrolling area. */
+#sql-pager {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 14px;
+	border-top: 1px solid var(--vscode-panel-border);
+	font-size: 12px;
+}
+
+#sql-pager[hidden] {
+	display: none;
+}
+
+#sql-pager button {
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
+	border: none;
+	padding: 4px 12px;
+	border-radius: 2px;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: 12px;
+}
+
+#sql-pager button:hover:not(:disabled) {
+	background: var(--vscode-button-secondaryHoverBackground);
+}
+
+#sql-pager button:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+#sql-pager-info {
+	margin-left: auto;
+	color: var(--vscode-descriptionForeground);
+}
+
+.sql-pager-page {
+	color: var(--vscode-descriptionForeground);
+	display: flex;
+	align-items: center;
+	gap: 5px;
+}
+
+#sql-page {
+	width: 56px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 2px;
+	padding: 3px 5px;
+	font-family: inherit;
+	font-size: 12px;
+	text-align: center;
+}
+
+#sql-limit {
+	background: var(--vscode-dropdown-background);
+	color: var(--vscode-dropdown-foreground);
+	border: 1px solid var(--vscode-dropdown-border, transparent);
+	border-radius: 2px;
+	padding: 3px 5px;
+	font-family: inherit;
+	font-size: 12px;
+}
+
+/* Sortable headers — click to sort, click again to flip. */
+th.sql-sortable {
+	cursor: pointer;
+	user-select: none;
+}
+
+th.sql-sortable:hover {
+	color: var(--vscode-foreground);
+	background: var(--vscode-list-hoverBackground);
+}
+
+th.sql-sortable.sorted {
+	color: var(--vscode-foreground);
+}
+
+.sql-arrow {
+	opacity: 0.8;
+	font-size: 9px;
+}
+
 #sql-dest-row {
 	display: flex;
 	align-items: center;

@@ -269,10 +269,11 @@ hint about what to install.
 ## SQL Console
 
 Give a server an `sql` block in `server-uploads.local.json` and the Server
-Uploads header gains a **database button** opening a console panel with two
+Uploads header gains a **database button** opening a console panel with three
 tabs: **Query** (a phpMyAdmin-style box — `Ctrl+Enter`, one result table per
-statement, full MySQL errors) and **Export** (dump the database as full, schema
-only or data only, with live progress).
+statement, full MySQL errors), **Browse** (page through a table with
+server-side search and click-to-sort headers) and **Export** (dump the database
+as full, schema only or data only, with live progress).
 
 Queries and dumps run **on the server over SSH**, not from your machine — over
 the internet every client round-trip costs network latency, so the same dump
