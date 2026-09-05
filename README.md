@@ -10,7 +10,7 @@ your `package.json` scripts and `.ps1` files automatically — then run anything
 [![Marketplace](https://vsmarketplacebadges.dev/version/PavelKhabusov.commands-extension.svg?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![Installs](https://vsmarketplacebadges.dev/installs/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension)
 [![Rating](https://vsmarketplacebadges.dev/rating-short/PavelKhabusov.commands-extension.svg)](https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension&ssr=false#review-details)
-![Version](https://img.shields.io/badge/version-0.0.17-4c9a4f)
+![Version](https://img.shields.io/badge/version-0.0.18-4c9a4f)
 ![License](https://img.shields.io/badge/license-MIT-7ba7d4)
 
 ![VS Code](https://img.shields.io/badge/VS%20Code-extension-007ACC?logo=visualstudiocode&logoColor=white)
