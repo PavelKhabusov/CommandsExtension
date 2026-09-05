@@ -814,7 +814,6 @@ function renderHtml(
         <select id="sql-table" title="Table to browse"><option value="">Loading tables…</option></select>
         <input type="search" id="sql-search" placeholder="Search all rows…" spellcheck="false">
         <button id="sql-search-run">Search</button>
-        <span class="sql-hint">Searches the whole table on the server, not just this page</span>
       </div>
     </div>
     <div id="sql-browse-output"><div class="sql-empty">Pick a table to browse.</div></div>
