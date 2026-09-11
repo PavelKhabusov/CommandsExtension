@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { CommandsPanel } from './webviewPanel';
 import { CommandsSidebarProvider } from './sidebarProvider';
 import { TerminalManager } from './terminalManager';
-import { UploadRunner, uploadFilesTo, listRemoteDir, remoteMkdir, QuickFile } from './uploadRunner';
+import { UploadRunner, uploadFilesTo, listRemoteDir, remoteMkdir, deleteRemotePaths, statRemoteTarget, QuickFile, RemoteTargetInfo } from './uploadRunner';
 import { UploadProgress, ResolvedUpload, ServerDefinition } from './uploadsTypes';
 import { isPathInUploadScope, resolveItems, loadUploads, resolveServer, hashFileSync, HASH_MAX_BYTES } from './uploadsProvider';
 import { loadCommands, loadCombinedOps } from './commandsProvider';
@@ -1060,6 +1060,9 @@ function specPreview(pairs: SpecPair[]): string {
     const dirParts = Array.from(dirs, ([dir, files]) => `${dir} ← ${files.join(', ')}`);
     groups.push(`«${server}» ${dirParts.join(' | ')}`);
   }
+  for (const [server, paths] of specDeletesByServer(pairs)) {
+    groups.push(`«${server}» ✖ DELETE ${paths.join(' | ')}`);
+  }
   return groups.join('   ‖   ');
 }
 
@@ -1079,7 +1082,22 @@ function specPreviewLines(pairs: SpecPair[]): string {
     const dirParts = Array.from(dirs, ([dir, files]) => `${dir} ← ${files.join(', ')}`);
     lines.push(`«${server}»  ${dirParts.join('  |  ')}`);
   }
+  for (const [server, paths] of specDeletesByServer(pairs)) {
+    lines.push(`«${server}»  ✖ DELETE  ${paths.join('  |  ')}`);
+  }
   return lines.join('\n');
+}
+
+/** Группировка `del`-строк спеки по серверу. */
+function specDeletesByServer(pairs: SpecPair[]): Map<string, string[]> {
+  const byServer = new Map<string, string[]>();
+  for (const p of pairs) {
+    if (!p.del || !p.serverName || !p.remoteDir) continue;
+    const list = byServer.get(p.serverName) ?? [];
+    list.push(p.remoteDir);
+    byServer.set(p.serverName, list);
+  }
+  return byServer;
 }
 
 /** Навигация по директориям сервера (FileZilla-style) → выбранный remote-dir. */
@@ -1165,6 +1183,63 @@ async function markQuickUploadSynced(files: QuickFile[]): Promise<void> {
   }
 }
 
+/**
+ * Удаление путей на сервере по спеке. Сначала сверяется с сервером и показывает,
+ * что именно будет снесено (файл / папка + сколько файлов внутри), и только после
+ * явного подтверждения удаляет — операция необратима.
+ */
+async function runQuickDelete(server: ServerDefinition, paths: string[]): Promise<void> {
+  if (paths.length === 0) return;
+
+  const targets = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Checking ${paths.length} path(s) on ${server.name}…` },
+    async () => {
+      const out: RemoteTargetInfo[] = [];
+      for (const p of paths) out.push(await statRemoteTarget(server, p));
+      return out;
+    }
+  );
+
+  const found = targets.filter((t) => t.exists);
+  const missing = targets.filter((t) => !t.exists);
+  if (found.length === 0) {
+    vscode.window.showWarningMessage(`Nothing to delete on ${server.name}: ${paths.length} path(s) not found.`);
+    return;
+  }
+
+  const totalFiles = found.reduce((n, t) => n + t.fileCount, 0);
+  const detail = found
+    .map((t) => (t.isDir ? `📁 ${t.path}  (${t.fileCount} file(s), recursive)` : `📄 ${t.path}`))
+    .join('\n')
+    + (missing.length ? `\n\nNot found (skipped):\n${missing.map((t) => t.path).join('\n')}` : '');
+
+  const pick = await vscode.window.showWarningMessage(
+    `Delete ${found.length} path(s) — ${totalFiles} file(s) — on ${server.name}? This cannot be undone.`,
+    { modal: true, detail },
+    'Delete'
+  );
+  if (pick !== 'Delete') return;
+
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Deleting on ${server.name}…`, cancellable: true },
+    async (progress, token) => {
+      const ac = new AbortController();
+      token.onCancellationRequested(() => ac.abort());
+      try {
+        const removed = await deleteRemotePaths(
+          server,
+          found.map((t) => t.path),
+          (p) => { if (p.message) progress.report({ message: p.message }); },
+          ac.signal
+        );
+        vscode.window.showInformationMessage(`Deleted ${removed} path(s) on ${server.name}.`);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Delete failed: ${(e as Error).message}`);
+      }
+    }
+  );
+}
+
 /** Обёртка заливки в withProgress-нотификацию с отменой. */
 async function runQuickUpload(server: ServerDefinition, files: QuickFile[], remoteDir: string): Promise<void> {
   if (files.length === 0) { vscode.window.showWarningMessage('No files to upload.'); return; }
@@ -1219,6 +1294,8 @@ interface SpecPair {
   serverName?: string;
   remoteDir?: string;
   error?: string;
+  /** Строка вида `del server:/path` — удалить путь на сервере, а не залить. */
+  del?: boolean;
 }
 
 /** Разобрать спеку в пары (по переводу строки или ';'). Валидация — по списку серверов. */
@@ -1228,8 +1305,17 @@ function parseSpec(text: string, serverNames: Set<string>): SpecPair[] {
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#'))
     .map((raw): SpecPair => {
+      const d = raw.match(/^del\s+([^:]+):(.+)$/i);
+      if (d) {
+        const serverName = d[1].trim();
+        const remoteDir = d[2].trim();
+        if (serverNames.size && !serverNames.has(serverName)) {
+          return { raw, serverName, remoteDir, del: true, error: `unknown server "${serverName}"` };
+        }
+        return { raw, serverName, remoteDir, del: true };
+      }
       const m = raw.match(/^(.+?)\s*=>\s*([^:]+):(.+)$/);
-      if (!m) return { raw, error: 'format: local => server:/dir' };
+      if (!m) return { raw, error: 'format: local => server:/dir  ·  del server:/path' };
       const localPath = m[1].trim();
       const serverName = m[2].trim();
       const remoteDir = m[3].trim();
@@ -1279,8 +1365,8 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
     };
     const ib = vscode.window.createInputBox();
     ib.title = 'Upload spec';
-    ib.prompt = `local => server:/dir  ·  several pairs separated by ";"  ·  servers: ${[...serverNames].join(', ') || '—'}`;
-    ib.placeholder = '/path/a.php => propress:/wp/inc ; /path/b.webm => propress:/wp/img';
+    ib.prompt = `local => server:/dir  ·  del server:/path  ·  several pairs separated by ";"  ·  servers: ${[...serverNames].join(', ') || '—'}`;
+    ib.placeholder = '/path/a.php => propress:/wp/inc ; del propress:/wp/inc/old.php';
     ib.value = initial || '';
     ib.validationMessage = previewFor(ib.value);
     ib.onDidChangeValue((v) => { ib.validationMessage = previewFor(v); });
@@ -1300,7 +1386,19 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
   // remoteDir is folded into the file's remoteRel (a full absolute remote path),
   // and the run is invoked with an empty remoteDir so that path is used verbatim.
   const buckets = new Map<string, { server: ServerDefinition; files: QuickFile[] }>();
+  const deletes = new Map<string, { server: ServerDefinition; paths: string[] }>();
   for (const line of lines) {
+    const d = line.match(/^del\s+([^:]+):(.+)$/i);
+    if (d) {
+      const serverName = d[1].trim();
+      const target = d[2].trim();
+      const server = servers.find((s) => s.name === serverName);
+      if (!server) { vscode.window.showErrorMessage(`Unknown server: ${serverName}`); continue; }
+      const bucket = deletes.get(serverName) || { server, paths: [] };
+      bucket.paths.push(target);
+      deletes.set(serverName, bucket);
+      continue;
+    }
     const m = line.match(/^(.+?)\s*=>\s*([^:]+):(.+)$/);
     if (!m) { vscode.window.showErrorMessage(`Bad spec line: ${line}`); continue; }
     const localPath = m[1].trim();
@@ -1326,6 +1424,9 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
 
   for (const { server, files } of buckets.values()) {
     await runQuickUpload(server, files, '');
+  }
+  for (const { server, paths } of deletes.values()) {
+    await runQuickDelete(server, paths);
   }
 }
 

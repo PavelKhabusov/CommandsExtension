@@ -123,6 +123,12 @@ user just pastes it. One pair per line:
 - **left** — absolute local path to a file or a folder (folder = recursive, keeps structure).
 - **`serverName`** — must match a `name` in `servers[]` of `server-uploads.local.json`.
 - **right of `:`** — target directory on the server.
+- **Deleting** — a line of the form `del <serverName>:<remote path>` removes that path on the
+  server instead of uploading. Works on files and folders (folders are removed recursively) and
+  can be mixed with upload pairs in the same spec. Before anything is removed the extension
+  checks the server and shows a modal listing exactly what was found — each file, and each
+  folder with how many files it contains — plus any paths that don't exist (skipped). Nothing is
+  deleted until you confirm.
 - Multiple pairs: separate by newline **or** `;` (the interactive input box is single-line, so use `;` when pasting several pairs there). Lines starting with `#` are ignored.
 - Pairs are **grouped by server**: everything bound for one server uploads over a single
   connection in one run, even when remote dirs differ. The input box shows a live parse
@@ -134,6 +140,7 @@ Example:
 ```
 /home/pavel/DEV/propress.ru/wp-content/themes/pro/img/logo-09-08.webm => dev-propress:/wp-content/themes/pro/img
 /home/pavel/Downloads/составные-части-иконки => dev-propress:/wp-content/themes/pro/img/constructor/parts
+del dev-propress:/wp-content/themes/pro/img/logo-old.webm
 ```
 
 Run via Command Palette → "Quick Upload from Spec" (or programmatically:

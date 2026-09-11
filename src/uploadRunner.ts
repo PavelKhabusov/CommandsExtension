@@ -964,6 +964,110 @@ export async function remoteMkdir(server: ServerDefinition, dir: string): Promis
   }
 }
 
+export interface RemoteTargetInfo {
+  path: string;
+  exists: boolean;
+  isDir: boolean;
+  /** Число файлов внутри (рекурсивно) — только для директорий. */
+  fileCount: number;
+}
+
+/** Что лежит по пути на сервере: файл, директория (со счётчиком) или ничего. */
+export async function statRemoteTarget(
+  server: ServerDefinition,
+  target: string
+): Promise<RemoteTargetInfo> {
+  const parent = posixDirname(target) || '/';
+  const base = target.replace(/\/+$/, '').split('/').pop() || '';
+  let entries: RemoteListEntry[];
+  try {
+    entries = await listRemoteDir(server, parent);
+  } catch {
+    return { path: target, exists: false, isDir: false, fileCount: 0 };
+  }
+  const hit = entries.find((e) => e.name === base);
+  if (!hit) return { path: target, exists: false, isDir: false, fileCount: 0 };
+  if (!hit.isDir) return { path: target, exists: true, isDir: false, fileCount: 1 };
+
+  let fileCount = 0;
+  const walk = async (dir: string): Promise<void> => {
+    let list: RemoteListEntry[];
+    try { list = await listRemoteDir(server, dir); } catch { return; }
+    for (const e of list) {
+      if (e.isDir) await walk(`${dir.replace(/\/+$/, '')}/${e.name}`);
+      else fileCount += 1;
+    }
+  };
+  await walk(target);
+  return { path: target, exists: true, isDir: true, fileCount };
+}
+
+/**
+ * Рекурсивно удаляет пути на сервере (файлы и директории) за одно соединение.
+ * Возвращает число удалённых файлов. Отсутствующие пути пропускаются.
+ */
+export async function deleteRemotePaths(
+  server: ServerDefinition,
+  targets: string[],
+  onProgress?: ProgressCallback,
+  signal?: AbortSignal
+): Promise<number> {
+  const port = serverPort(server);
+  let removed = 0;
+
+  const emit = (message: string) => {
+    onProgress?.({ uploadKey: '__quick_delete__', status: 'running', message });
+  };
+
+  if (server.protocol === 'sftp') {
+    const c = new SftpClient();
+    const onAbort = () => { c.end().catch(() => undefined); };
+    signal?.addEventListener('abort', onAbort);
+    try {
+      await c.connect({ host: server.host, port, username: server.user, password: server.password, readyTimeout: 30_000 });
+      for (const t of targets) {
+        if (signal?.aborted) throw new Error('Cancelled');
+        emit(`Deleting ${t}…`);
+        try {
+          const type = await c.exists(t);
+          if (!type) continue;
+          if (type === 'd') { await c.rmdir(t, true); removed += 1; }
+          else { await c.delete(t); removed += 1; }
+        } catch { /* уже нет или нет прав — идём дальше */ }
+      }
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+      await c.end().catch(() => undefined);
+    }
+    return removed;
+  }
+
+  const c = new ftp.Client(30_000);
+  c.ftp.verbose = false;
+  const onAbort = () => c.close();
+  signal?.addEventListener('abort', onAbort);
+  try {
+    await c.access({ host: server.host, port, user: server.user, password: server.password, secure: server.protocol === 'ftps' });
+    for (const t of targets) {
+      if (signal?.aborted) throw new Error('Cancelled');
+      emit(`Deleting ${t}…`);
+      try {
+        await c.remove(t);
+        removed += 1;
+      } catch {
+        try {
+          await c.removeDir(t);
+          removed += 1;
+        } catch { /* уже нет или нет прав */ }
+      }
+    }
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    c.close();
+  }
+  return removed;
+}
+
 /**
  * Разовая заливка списка файлов в remoteDir. Каждый файл ложится в
  * `remoteDir/<remoteRel>`; недостающие директории создаются. Прогресс — по

@@ -2,6 +2,11 @@
 
 All notable changes to Commands Extension are documented here.
 
+## [Unreleased]
+
+### Added
+- **Delete from an upload spec** — a spec line of the form `del <server>:<remote path>` removes that path on the server instead of uploading, and can be mixed with upload pairs in the same spec (`a.php => propress:/inc ; del propress:/inc/old.php`). Files and folders both work, folders recursively. Because deletion is irreversible, the extension first checks the server and shows a modal listing exactly what was found — each file, and each folder with the number of files inside — plus any paths that don't exist and will be skipped; nothing is removed until you confirm. Deletions for one server run over a single connection and can be cancelled mid-flight.
+
 ## [0.0.18] - 2026-08-31
 
 ### Added
