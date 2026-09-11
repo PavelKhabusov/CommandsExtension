@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { CommandsPanel } from './webviewPanel';
 import { CommandsSidebarProvider } from './sidebarProvider';
 import { TerminalManager } from './terminalManager';
-import { UploadRunner, uploadFilesTo, listRemoteDir, remoteMkdir, deleteRemotePaths, statRemoteTarget, QuickFile, RemoteTargetInfo } from './uploadRunner';
+import { UploadRunner, uploadFilesTo, listRemoteDir, remoteMkdir, deleteRemotePaths, statRemoteTarget, downloadRemotePaths, QuickFile, RemoteTargetInfo, DownloadTarget } from './uploadRunner';
 import { UploadProgress, ResolvedUpload, ServerDefinition } from './uploadsTypes';
 import { isPathInUploadScope, resolveItems, loadUploads, resolveServer, hashFileSync, HASH_MAX_BYTES } from './uploadsProvider';
 import { loadCommands, loadCombinedOps } from './commandsProvider';
@@ -1048,6 +1048,7 @@ function specSummary(pairs: SpecPair[]): string {
 function specPreview(pairs: SpecPair[]): string {
   const byServer = new Map<string, Map<string, string[]>>();
   for (const p of pairs) {
+    if (p.down || p.del) continue;
     if (!p.serverName || !p.localPath) continue;
     const dirs = byServer.get(p.serverName) ?? new Map<string, string[]>();
     const files = dirs.get(p.remoteDir || '/') ?? [];
@@ -1070,6 +1071,7 @@ function specPreview(pairs: SpecPair[]): string {
 function specPreviewLines(pairs: SpecPair[]): string {
   const byServer = new Map<string, Map<string, string[]>>();
   for (const p of pairs) {
+    if (p.down || p.del) continue;
     if (!p.serverName || !p.localPath) continue;
     const dirs = byServer.get(p.serverName) ?? new Map<string, string[]>();
     const files = dirs.get(p.remoteDir || '/') ?? [];
@@ -1082,10 +1084,25 @@ function specPreviewLines(pairs: SpecPair[]): string {
     const dirParts = Array.from(dirs, ([dir, files]) => `${dir} ← ${files.join(', ')}`);
     lines.push(`«${server}»  ${dirParts.join('  |  ')}`);
   }
+  for (const [server, items] of specDownloadsByServer(pairs)) {
+    lines.push(`«${server}»  ⬇ DOWNLOAD  ${items.map((i) => `${i.remote} → ${i.local}`).join('  |  ')}`);
+  }
   for (const [server, paths] of specDeletesByServer(pairs)) {
     lines.push(`«${server}»  ✖ DELETE  ${paths.join('  |  ')}`);
   }
   return lines.join('\n');
+}
+
+/** Группировка `server:/path => local`-строк спеки по серверу. */
+function specDownloadsByServer(pairs: SpecPair[]): Map<string, Array<{ remote: string; local: string }>> {
+  const byServer = new Map<string, Array<{ remote: string; local: string }>>();
+  for (const p of pairs) {
+    if (!p.down || !p.serverName || !p.remoteDir || !p.localPath) continue;
+    const list = byServer.get(p.serverName) ?? [];
+    list.push({ remote: p.remoteDir, local: p.localPath });
+    byServer.set(p.serverName, list);
+  }
+  return byServer;
 }
 
 /** Группировка `del`-строк спеки по серверу. */
@@ -1181,6 +1198,36 @@ async function markQuickUploadSynced(files: QuickFile[]): Promise<void> {
       );
     }
   }
+}
+
+/** Скачивание путей с сервера по спеке, с прогрессом и отменой. */
+async function runQuickDownload(server: ServerDefinition, targets: DownloadTarget[]): Promise<void> {
+  if (targets.length === 0) return;
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Downloading ${targets.length} path(s) from ${server.name}…`, cancellable: true },
+    async (progress, token) => {
+      const ac = new AbortController();
+      token.onCancellationRequested(() => ac.abort());
+      try {
+        const got = await downloadRemotePaths(
+          server,
+          targets,
+          (p) => { if (p.message) progress.report({ message: p.message }); },
+          ac.signal
+        );
+        const where = targets.length === 1 ? targets[0].localDir : `${targets.length} folder(s)`;
+        const open = await vscode.window.showInformationMessage(
+          `Downloaded ${got} file(s) from ${server.name} → ${where}`,
+          'Reveal'
+        );
+        if (open === 'Reveal') {
+          await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(targets[0].localDir));
+        }
+      } catch (e) {
+        vscode.window.showErrorMessage(`Download failed: ${(e as Error).message}`);
+      }
+    }
+  );
 }
 
 /**
@@ -1296,6 +1343,8 @@ interface SpecPair {
   error?: string;
   /** Строка вида `del server:/path` — удалить путь на сервере, а не залить. */
   del?: boolean;
+  /** Строка вида `server:/path => /local/dir` — скачать с сервера. */
+  down?: boolean;
 }
 
 /** Разобрать спеку в пары (по переводу строки или ';'). Валидация — по списку серверов. */
@@ -1314,8 +1363,13 @@ function parseSpec(text: string, serverNames: Set<string>): SpecPair[] {
         }
         return { raw, serverName, remoteDir, del: true };
       }
+      // Скачивание: `server:/remote => /local/dir` — сервер слева от стрелки.
+      const g = raw.match(/^([^:/\\]+):(.+?)\s*=>\s*(.+)$/);
+      if (g && serverNames.has(g[1].trim())) {
+        return { raw, serverName: g[1].trim(), remoteDir: g[2].trim(), localPath: g[3].trim(), down: true };
+      }
       const m = raw.match(/^(.+?)\s*=>\s*([^:]+):(.+)$/);
-      if (!m) return { raw, error: 'format: local => server:/dir  ·  del server:/path' };
+      if (!m) return { raw, error: 'format: local => server:/dir  ·  server:/path => local  ·  del server:/path' };
       const localPath = m[1].trim();
       const serverName = m[2].trim();
       const remoteDir = m[3].trim();
@@ -1365,8 +1419,8 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
     };
     const ib = vscode.window.createInputBox();
     ib.title = 'Upload spec';
-    ib.prompt = `local => server:/dir  ·  del server:/path  ·  several pairs separated by ";"  ·  servers: ${[...serverNames].join(', ') || '—'}`;
-    ib.placeholder = '/path/a.php => propress:/wp/inc ; del propress:/wp/inc/old.php';
+    ib.prompt = `local => server:/dir  ·  server:/path => local  ·  del server:/path  ·  several pairs separated by ";"  ·  servers: ${[...serverNames].join(', ') || '—'}`;
+    ib.placeholder = '/path/a.php => propress:/wp/inc ; propress:/wp/inc/b.php => /tmp/out ; del propress:/wp/inc/old.php';
     ib.value = initial || '';
     ib.validationMessage = previewFor(ib.value);
     ib.onDidChangeValue((v) => { ib.validationMessage = previewFor(v); });
@@ -1387,7 +1441,23 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
   // and the run is invoked with an empty remoteDir so that path is used verbatim.
   const buckets = new Map<string, { server: ServerDefinition; files: QuickFile[] }>();
   const deletes = new Map<string, { server: ServerDefinition; paths: string[] }>();
+  const downloads = new Map<string, { server: ServerDefinition; targets: DownloadTarget[] }>();
   for (const line of lines) {
+    const g = line.match(/^([^:/\\]+):(.+?)\s*=>\s*(.+)$/);
+    if (g && servers.some((s) => s.name === g[1].trim())) {
+      const server = servers.find((s) => s.name === g[1].trim())!;
+      const remotePath = g[2].trim();
+      let localDir = g[3].trim();
+      if (!path.isAbsolute(localDir)) {
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!root) { vscode.window.showErrorMessage(`Relative local dir needs an open workspace: ${line}`); continue; }
+        localDir = path.join(root, localDir);
+      }
+      const bucket = downloads.get(server.name) || { server, targets: [] };
+      bucket.targets.push({ remotePath, localDir });
+      downloads.set(server.name, bucket);
+      continue;
+    }
     const d = line.match(/^del\s+([^:]+):(.+)$/i);
     if (d) {
       const serverName = d[1].trim();
@@ -1424,6 +1494,9 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
 
   for (const { server, files } of buckets.values()) {
     await runQuickUpload(server, files, '');
+  }
+  for (const { server, targets } of downloads.values()) {
+    await runQuickDownload(server, targets);
   }
   for (const { server, paths } of deletes.values()) {
     await runQuickDelete(server, paths);

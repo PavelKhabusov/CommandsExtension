@@ -123,6 +123,10 @@ user just pastes it. One pair per line:
 - **left** — absolute local path to a file or a folder (folder = recursive, keeps structure).
 - **`serverName`** — must match a `name` in `servers[]` of `server-uploads.local.json`.
 - **right of `:`** — target directory on the server.
+- **Downloading** — a line of the form `<serverName>:<remote path> => <local dir>` pulls from the
+  server instead of uploading (the server is on the *left* of the arrow). A file lands as
+  `<local dir>/<basename>`; a folder is fetched recursively, keeping its structure. The local dir
+  is created if missing and may be relative to the workspace root.
 - **Deleting** — a line of the form `del <serverName>:<remote path>` removes that path on the
   server instead of uploading. Works on files and folders (folders are removed recursively) and
   can be mixed with upload pairs in the same spec. Before anything is removed the extension
@@ -140,6 +144,7 @@ Example:
 ```
 /home/pavel/DEV/propress.ru/wp-content/themes/pro/img/logo-09-08.webm => dev-propress:/wp-content/themes/pro/img
 /home/pavel/Downloads/составные-части-иконки => dev-propress:/wp-content/themes/pro/img/constructor/parts
+dev-propress:/wp-content/themes/pro/style.css => /home/pavel/backup
 del dev-propress:/wp-content/themes/pro/img/logo-old.webm
 ```
 

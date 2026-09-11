@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as http from 'http';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import * as ftp from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
@@ -1066,6 +1067,101 @@ export async function deleteRemotePaths(
     c.close();
   }
   return removed;
+}
+
+export interface DownloadTarget {
+  /** Абсолютный путь на сервере (файл или папка). */
+  remotePath: string;
+  /** Локальная директория, куда класть. */
+  localDir: string;
+}
+
+/**
+ * Скачивает пути с сервера в локальные директории за одно соединение.
+ * Файл ложится как `localDir/<basename>`, папка — рекурсивно с сохранением
+ * структуры в `localDir/<basename>/…`. Возвращает число скачанных файлов.
+ */
+export async function downloadRemotePaths(
+  server: ServerDefinition,
+  targets: DownloadTarget[],
+  onProgress?: ProgressCallback,
+  signal?: AbortSignal
+): Promise<number> {
+  const port = serverPort(server);
+  let done = 0;
+
+  const emit = (message: string) => {
+    onProgress?.({ uploadKey: '__quick_download__', status: 'running', message, filesDone: done });
+  };
+
+  const baseName = (p: string) => p.replace(/\/+$/, '').split('/').pop() || '';
+
+  if (server.protocol === 'sftp') {
+    const c = new SftpClient();
+    const onAbort = () => { c.end().catch(() => undefined); };
+    signal?.addEventListener('abort', onAbort);
+    try {
+      await c.connect({ host: server.host, port, username: server.user, password: server.password, readyTimeout: 30_000 });
+      const pull = async (remote: string, localDir: string): Promise<void> => {
+        if (signal?.aborted) throw new Error('Cancelled');
+        const type = await c.exists(remote);
+        if (!type) throw new Error(`not found on server: ${remote}`);
+        if (type === 'd') {
+          const dest = path.join(localDir, baseName(remote));
+          await fs.promises.mkdir(dest, { recursive: true });
+          for (const e of await c.list(remote)) {
+            await pull(`${remote.replace(/\/+$/, '')}/${e.name}`, dest);
+          }
+          return;
+        }
+        await fs.promises.mkdir(localDir, { recursive: true });
+        const dest = path.join(localDir, baseName(remote));
+        emit(`Downloading ${baseName(remote)}…`);
+        await c.fastGet(remote, dest);
+        done += 1;
+      };
+      for (const t of targets) await pull(t.remotePath, t.localDir);
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+      await c.end().catch(() => undefined);
+    }
+    return done;
+  }
+
+  const c = new ftp.Client(30_000);
+  c.ftp.verbose = false;
+  const onAbort = () => c.close();
+  signal?.addEventListener('abort', onAbort);
+  try {
+    await c.access({ host: server.host, port, user: server.user, password: server.password, secure: server.protocol === 'ftps' });
+    const pull = async (remote: string, localDir: string): Promise<void> => {
+      if (signal?.aborted) throw new Error('Cancelled');
+      const parent = posixDirname(remote) || '/';
+      const name = baseName(remote);
+      let entry: ftp.FileInfo | undefined;
+      try {
+        entry = (await c.list(parent)).find((e) => e.name === name);
+      } catch { /* родителя нет */ }
+      if (!entry) throw new Error(`not found on server: ${remote}`);
+      if (entry.isDirectory) {
+        const dest = path.join(localDir, name);
+        await fs.promises.mkdir(dest, { recursive: true });
+        for (const e of await c.list(remote)) {
+          await pull(`${remote.replace(/\/+$/, '')}/${e.name}`, dest);
+        }
+        return;
+      }
+      await fs.promises.mkdir(localDir, { recursive: true });
+      emit(`Downloading ${name}…`);
+      await c.downloadTo(path.join(localDir, name), remote);
+      done += 1;
+    };
+    for (const t of targets) await pull(t.remotePath, t.localDir);
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    c.close();
+  }
+  return done;
 }
 
 /**

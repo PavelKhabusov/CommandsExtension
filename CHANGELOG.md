@@ -5,6 +5,7 @@ All notable changes to Commands Extension are documented here.
 ## [Unreleased]
 
 ### Added
+- **Download from an upload spec** — a spec line of the form `<server>:<remote path> => <local dir>` pulls from the server instead of uploading (the server sits on the *left* of the arrow). A file lands as `<local dir>/<basename>`, a folder is fetched recursively keeping its structure, and the local directory is created if missing (a relative path resolves against the workspace root). Downloads for one server run over a single connection with live progress and cancellation, and the completion toast offers **Reveal** to open the folder.
 - **Delete from an upload spec** — a spec line of the form `del <server>:<remote path>` removes that path on the server instead of uploading, and can be mixed with upload pairs in the same spec (`a.php => propress:/inc ; del propress:/inc/old.php`). Files and folders both work, folders recursively. Because deletion is irreversible, the extension first checks the server and shows a modal listing exactly what was found — each file, and each folder with the number of files inside — plus any paths that don't exist and will be skipped; nothing is removed until you confirm. Deletions for one server run over a single connection and can be cancelled mid-flight.
 
 ## [0.0.18] - 2026-08-31
