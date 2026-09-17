@@ -1203,31 +1203,34 @@ async function markQuickUploadSynced(files: QuickFile[]): Promise<void> {
 /** Скачивание путей с сервера по спеке, с прогрессом и отменой. */
 async function runQuickDownload(server: ServerDefinition, targets: DownloadTarget[]): Promise<void> {
   if (targets.length === 0) return;
-  await vscode.window.withProgress(
+  const got = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Downloading ${targets.length} path(s) from ${server.name}…`, cancellable: true },
     async (progress, token) => {
       const ac = new AbortController();
       token.onCancellationRequested(() => ac.abort());
       try {
-        const got = await downloadRemotePaths(
+        return await downloadRemotePaths(
           server,
           targets,
           (p) => { if (p.message) progress.report({ message: p.message }); },
           ac.signal
         );
-        const where = targets.length === 1 ? targets[0].localDir : `${targets.length} folder(s)`;
-        const open = await vscode.window.showInformationMessage(
-          `Downloaded ${got} file(s) from ${server.name} → ${where}`,
-          'Reveal'
-        );
-        if (open === 'Reveal') {
-          await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(targets[0].localDir));
-        }
       } catch (e) {
         vscode.window.showErrorMessage(`Download failed: ${(e as Error).message}`);
+        return undefined;
       }
     }
   );
+  if (got === undefined) return;
+
+  const where = targets.length === 1 ? targets[0].localDir : `${targets.length} folder(s)`;
+  void vscode.window
+    .showInformationMessage(`Downloaded ${got} file(s) from ${server.name} → ${where}`, 'Reveal')
+    .then((open) => {
+      if (open === 'Reveal') {
+        void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(targets[0].localDir));
+      }
+    });
 }
 
 /**
