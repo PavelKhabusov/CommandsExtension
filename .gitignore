@@ -9,3 +9,5 @@ dist/
 /commands-list.json
 /server-uploads.local.json
 /spec.test.txt
+
+docs/_screens/

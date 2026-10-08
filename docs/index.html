@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commands Extension — one-click command runner for VS Code</title>
+<meta name="description" content="Run every project command from a VS Code sidebar: commands-list.json, npm scripts and .ps1 files, multi-step combined operations, FTP/SFTP server uploads and a paste-in upload spec for agents.">
+<meta name="theme-color" content="#0a0b0d">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Commands Extension — one-click command runner for VS Code">
+<meta property="og:description" content="Buttons for every project command, multi-step operations and FTP/SFTP deploys — defined in one JSON file.">
+<meta property="og:image" content="https://pavelkhabusov.github.io/CommandsExtension/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#101215;--bg2:#131518;--panel:#191c20;--panel2:#22262b;--panel3:#2b3035;--line:#2b3035;--line2:#373c43;
+  --fg:#eceef1;--mute:#aab0b8;--dim:#878e97;--faint:#646a73;
+  --term:#08090a;--termfg:#c4c9cf;
+  --ok:#8fd4a0;--bad:#ec9e9e;--warn:#e6c48e;
+  --glass:#0a0b0dcc;--shadow:0 40px 120px -40px #000,0 0 0 1px #ffffff08 inset;
+  --h1a:#ffffff;--h1b:#9aa1aa;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:light){:root{
+  --bg:#f7f7f5;--bg2:#efefec;--panel:#ffffff;--panel2:#f2f2ef;--panel3:#e7e7e3;--line:#e4e4df;--line2:#d3d3cd;
+  --fg:#16181b;--mute:#4b5058;--dim:#666c75;--faint:#8c9199;
+  --term:#101215;--termfg:#c4c9cf;
+  --ok:#2f8f4e;--bad:#c0504d;--warn:#a87a1e;
+  --glass:#f7f7f5cc;--shadow:0 40px 100px -50px #0004,0 0 0 1px #0000000a inset;
+  --h1a:#0d0f12;--h1b:#5b616a;
+  color-scheme:light;
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--fg);font:16px/1.6 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+html,body{overflow-x:clip}
+code,pre,kbd,.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+code{font-size:.86em;background:var(--panel2);border:1px solid var(--line);padding:1px 6px;border-radius:5px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+svg.i{width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.15em;flex:none}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--faint)}.acc{color:var(--acc)}
+
+.rv{opacity:0;transform:translateY(18px);transition:opacity .8s cubic-bezier(.2,.7,.2,1),transform .8s cubic-bezier(.2,.7,.2,1)}
+.rv.in{opacity:1;transform:none}
+.d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}.d4{transition-delay:.32s}
+
+nav{position:sticky;top:0;z-index:20;background:var(--glass);backdrop-filter:saturate(1.4) blur(14px);-webkit-backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px;gap:12px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:15px;letter-spacing:-.2px;white-space:nowrap}
+.brand img{width:24px;height:24px;border-radius:6px}
+nav .links{display:flex;gap:2px;align-items:center}
+nav .links a{color:var(--dim);font-size:13.5px;padding:7px 11px;border-radius:8px;transition:color .2s,background .2s}
+nav .links a:hover{color:var(--fg);background:var(--panel2)}
+nav .links a.gh{display:inline-flex;gap:7px;align-items:center;color:var(--fg);border:1px solid var(--line2);margin-left:8px}
+
+.hero{position:relative;padding:110px 0 30px;text-align:center}
+.hero::before{content:"";position:absolute;left:50%;top:-140px;width:1100px;max-width:160vw;height:720px;transform:translateX(-50%);pointer-events:none;z-index:-1;
+  background:radial-gradient(closest-side,color-mix(in srgb,var(--acc) 15%,transparent),transparent 70%)}
+.hero::after{content:"";position:absolute;inset:-60px 0 auto;height:760px;pointer-events:none;z-index:-2;
+  background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:56px 56px;
+  -webkit-mask-image:radial-gradient(60% 55% at 50% 30%,#000 10%,transparent 75%);mask-image:radial-gradient(60% 55% at 50% 30%,#000 10%,transparent 75%);opacity:.55}
+.pill{display:inline-flex;align-items:center;gap:9px;padding:5px 14px 5px 6px;border:1px solid var(--line2);border-radius:999px;font-size:13px;color:var(--mute);background:var(--panel)}
+.pill:has(b[hidden]){padding-left:14px}
+.pill b[hidden]{display:none}
+.pill b{background:color-mix(in srgb,var(--acc) 18%,transparent);color:var(--acc);padding:2px 9px;border-radius:999px;font-weight:600;font-size:11.5px}
+h1{font-size:clamp(40px,6.4vw,74px);line-height:1.02;letter-spacing:-.045em;font-weight:750;margin:26px auto 22px;max-width:1100px;
+  background:linear-gradient(180deg,var(--h1a) 30%,var(--h1b));-webkit-background-clip:text;background-clip:text;color:transparent;padding-bottom:.06em}
+.lead{font-size:clamp(17px,1.5vw,19px);color:var(--mute);max-width:680px;margin:0 auto 34px;line-height:1.55}
+.btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:12px 20px;border-radius:11px;font-weight:550;font-size:14.5px;border:1px solid var(--line2);background:var(--panel);color:var(--fg);transition:transform .2s,background .2s,box-shadow .2s}
+.btn:hover{transform:translateY(-1px);background:var(--panel2)}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:transparent;box-shadow:0 10px 30px -10px color-mix(in srgb,var(--acc) 38%,transparent)}
+.btn.primary:hover{background:var(--fg);box-shadow:0 14px 40px -10px color-mix(in srgb,var(--acc) 52%,transparent)}
+.install{display:inline-flex;align-items:center;gap:12px;margin-top:22px;padding:9px 10px 9px 16px;border:1px solid var(--line);border-radius:11px;background:var(--panel);font:13px "JetBrains Mono",monospace;color:var(--mute);max-width:100%}
+.install span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.install b{color:var(--acc);font-weight:500}
+.copy{border:1px solid var(--line2);background:var(--panel2);color:var(--mute);border-radius:7px;padding:5px 9px;font:12px Inter,sans-serif;cursor:pointer;display:inline-flex;gap:6px;align-items:center;flex:none}
+.copy:hover{color:var(--fg)}
+
+.win{text-align:left;margin:64px auto 0;border:1px solid var(--line2);border-radius:16px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden;position:relative}
+.win .tb{display:flex;align-items:center;gap:8px;height:40px;padding:0 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim);background:var(--bg2)}
+.win .tb i{width:11px;height:11px;border-radius:50%;background:var(--line2);display:inline-block}
+.win .tb .t{margin:0 auto;font-weight:500}
+.glow{position:relative}
+.glow::before{content:"";position:absolute;inset:-1px;border-radius:17px;padding:1px;background:linear-gradient(120deg,transparent 30%,color-mix(in srgb,var(--acc) 45%,transparent) 50%,transparent 70%);background-size:300% 100%;
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:sweep 6s linear infinite;pointer-events:none;z-index:3}
+@keyframes sweep{from{background-position:150% 0}to{background-position:-150% 0}}
+
+.term{background:var(--term);color:var(--termfg);font:12.5px/1.75 "JetBrains Mono",monospace;padding:16px 18px;overflow:hidden}
+.term .p{color:#7f8790}.term .c{color:#e6c48e}.term .g{color:#8fd4a0}.term .r{color:#ec9e9e}.term .b{color:#9cc4ec}.term .w{color:#fff}
+.term .ln{white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.caret{display:inline-block;width:7px;height:14px;background:#c4c9cf;vertical-align:-2px;animation:blinkc 1s steps(1) infinite}
+@keyframes blinkc{50%{opacity:0}}
+
+.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-top:18px;text-align:left}
+.strip div{background:var(--panel);padding:22px 22px}
+.strip b{display:block;font-size:30px;letter-spacing:-.04em;font-weight:700;line-height:1.1;margin-bottom:4px}
+.strip span{text-wrap:pretty;font-size:13px;color:var(--dim);line-height:1.45;display:block}
+
+section{padding:120px 0 0}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font:500 12px "JetBrains Mono",monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--acc);margin-bottom:18px}
+h2{font-size:clamp(30px,4vw,52px);letter-spacing:-.04em;line-height:1.05;font-weight:720;max-width:820px}
+.sub{color:var(--dim);font-size:clamp(16px,1.4vw,18px);max-width:640px;margin-top:16px;line-height:1.6}
+.center{text-align:center}.center h2,.center .sub{margin-left:auto;margin-right:auto}
+.head{margin-bottom:52px}
+
+.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px;display:flex;flex-direction:column;gap:10px;overflow:hidden;position:relative;min-width:0;transition:border-color .3s}
+.card:hover{border-color:var(--line2)}
+.card .ic{width:36px;height:36px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--acc)}
+.card h3{font-size:18px;font-weight:620;letter-spacing:-.02em;margin-top:6px}
+.card p{color:var(--dim);font-size:14.5px;line-height:1.6}
+.card .art{margin-top:auto;padding-top:14px}
+.w2{grid-column:span 2}.w3{grid-column:span 3}.w4{grid-column:span 4}.w6{grid-column:span 6}
+
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;counter-reset:s}
+.step{border-top:1px solid var(--line2);padding-top:22px;position:relative}
+.step::before{counter-increment:s;content:"0" counter(s);font:500 12px "JetBrains Mono",monospace;color:var(--acc);display:block;margin-bottom:22px}
+.step::after{content:"";position:absolute;left:0;top:-1px;height:1px;width:0;background:var(--acc);transition:width 1.4s cubic-bezier(.2,.7,.2,1)}
+.step.in::after{width:100%}
+.step h3{font-size:22px;letter-spacing:-.02em;font-weight:640;margin-bottom:8px}
+.step p{color:var(--dim);font-size:15px}
+
+pre{background:var(--term);color:var(--termfg);border:1px solid var(--line);border-radius:14px;padding:18px 20px;overflow:auto;font-size:12.5px;line-height:1.75;max-width:100%}
+pre .k{color:#9cc4ec}pre .s{color:#e6c48e}pre .c{color:#6b737c}pre .n{color:#c8a6f0}pre .g{color:#8fd4a0}
+
+.tabs{border:1px solid var(--line);border-radius:18px;background:var(--panel);overflow:hidden}
+.tabs .th{display:flex;gap:4px;padding:8px;border-bottom:1px solid var(--line);background:var(--bg2);overflow-x:auto}
+.tabs button{background:none;border:0;color:var(--dim);font:500 13px Inter,sans-serif;padding:8px 14px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.tabs button[aria-selected=true]{background:var(--panel2);color:var(--fg);box-shadow:0 0 0 1px var(--line2) inset}
+.tabs .tp{display:none}.tabs .tp.on{display:block}
+.tabs pre{border:0;border-radius:0;margin:0}
+
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl td{padding:12px 16px;border-top:1px solid var(--line);vertical-align:top;color:var(--dim)}
+.tbl tr:first-child td{border-top:0}
+.tbl td:first-child{white-space:nowrap;color:var(--fg);font-family:"JetBrains Mono",monospace;font-size:13px}
+.scroll{overflow-x:auto;max-width:100%}
+
+.cta{margin:0;border:1px solid var(--line2);border-radius:28px;padding:88px 32px;text-align:center;position:relative;overflow:hidden;isolation:isolate;background:radial-gradient(120% 90% at 50% 0%,var(--panel2),var(--panel) 60%)}
+.cta::before{content:"";position:absolute;inset:-35%;z-index:-2;pointer-events:none;filter:blur(40px);
+  background:radial-gradient(28% 32% at 28% 72%,color-mix(in srgb,var(--acc) 24%,transparent),transparent 70%),radial-gradient(26% 30% at 74% 78%,color-mix(in srgb,var(--acc) 15%,transparent),transparent 70%),radial-gradient(22% 22% at 58% 26%,color-mix(in srgb,var(--acc) 12%,transparent),transparent 70%);
+  animation:aurora 16s ease-in-out infinite alternate}
+@keyframes aurora{0%{transform:translate(-5%,3%) rotate(-4deg)}100%{transform:translate(5%,-4%) rotate(6deg)}}
+.cta::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;opacity:.5;
+  background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:44px 44px;
+  -webkit-mask-image:radial-gradient(70% 70% at 50% 60%,#000,transparent 75%);mask-image:radial-gradient(70% 70% at 50% 60%,#000,transparent 75%)}
+.cta .wm{position:absolute;right:-70px;bottom:-90px;width:360px;height:360px;opacity:.07;transform:rotate(-14deg);z-index:-1;pointer-events:none}
+.cta h2{margin:0 auto 14px;font-size:clamp(36px,5vw,64px)}
+.cta .sub{margin:0 auto 30px}
+.gbox{position:relative;border-radius:14px;box-shadow:0 0 0 1px color-mix(in srgb,var(--acc) 35%,transparent),0 24px 70px -24px color-mix(in srgb,var(--acc) 36%,transparent)}
+.cta .install.gbox{border-color:transparent}
+.cta pre.gbox{border-color:transparent}
+
+.more{padding-top:110px}
+.more .mh{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.more .mh .eyebrow{margin:0}
+.mgh{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--dim)}.mgh:hover{color:var(--fg)}
+.mg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.mt{display:flex;align-items:center;gap:16px;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--panel);transition:border-color .25s,transform .25s,background .25s}
+.mt:hover{border-color:var(--line2);transform:translateY(-2px);background:var(--panel2)}
+.mt img{width:44px;height:44px;border-radius:11px;flex:none}
+.mt span{display:grid;gap:2px;min-width:0}
+.mt b{font-size:16px;font-weight:620;letter-spacing:-.01em}
+.mt small{font-size:13.5px;color:var(--dim);line-height:1.45}
+.mt>svg.i{margin-left:auto;color:var(--faint);font-size:18px;transition:color .25s,transform .25s}
+.mt:hover>svg.i{color:var(--acc);transform:translate(2px,-2px)}
+@media(max-width:680px){.mg{grid-template-columns:minmax(0,1fr)}.more{padding-top:80px}}
+p,li,.sub,.lead{text-wrap:pretty}
+h1,h2,h3{text-wrap:balance}
+.card p,.sub{max-width:64ch}
+code{white-space:nowrap}
+footer{margin-top:100px;padding:34px 0 44px;border-top:1px solid var(--line);color:var(--faint);font-size:13.5px}
+footer .wrap{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+footer .fl{display:flex;gap:18px;flex-wrap:wrap}
+footer a{color:var(--dim)}footer a:hover{color:var(--fg)}
+
+.hand{font-family:Caveat,cursive;font-weight:700;color:var(--acc);-webkit-text-fill-color:var(--acc);display:inline-block;transform:rotate(-2.5deg);font-size:1.18em;letter-spacing:-.01em;line-height:.8;position:relative;padding:0 .06em;white-space:nowrap}
+.hand svg{position:absolute;left:2%;bottom:-.06em;width:96%;height:.26em;overflow:visible}
+.hand path{fill:none;stroke:var(--acc);stroke-width:2.6;stroke-linecap:round;vector-effect:non-scaling-stroke;stroke-dasharray:420;stroke-dashoffset:420;opacity:.7}
+.in .hand path,.hand.in path{animation:hdraw 1.1s .5s cubic-bezier(.6,.1,.3,1) forwards}
+@keyframes hdraw{to{stroke-dashoffset:0}}
+@media (prefers-reduced-motion:reduce){.hand path{stroke-dashoffset:0}}
+@media(max-width:960px){
+  .bento{grid-template-columns:repeat(2,minmax(0,1fr))}.w2,.w3,.w4{grid-column:span 1}.w6,.wide-m{grid-column:span 2}
+  .strip{grid-template-columns:1fr 1fr}
+  nav .links a:not(.gh){display:none}
+}
+@media(max-width:680px){
+  .wrap{padding:0 16px}
+  .hero{padding:64px 0 10px}
+  section{padding-top:88px}
+  .bento{grid-template-columns:minmax(0,1fr)}.w6,.wide-m{grid-column:span 1}
+  .steps{grid-template-columns:minmax(0,1fr);gap:34px}
+  .card{padding:22px}
+  .btn{padding:11px 16px}
+  .cta{padding:52px 20px}
+  .head{margin-bottom:36px}
+  .strip b{font-size:24px}.strip div{padding:18px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .rv{opacity:1;transform:none}
+  html{scroll-behavior:auto}
+}
+
+:root{--acc:#93b4d6;--acc2:#cfcfa6}
+@media (prefers-color-scheme:light){:root{--acc:#3b6996;--acc2:#7d7330}}
+
+/* hero vscode mock */
+.vs{display:grid;grid-template-columns:48px 300px minmax(0,1fr);height:470px}
+.ab{background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:18px;padding-top:14px;color:var(--faint);font-size:20px}
+.ab .on{color:var(--fg);position:relative}
+.ab .on::before{content:"";position:absolute;left:-14px;top:-4px;bottom:-4px;width:2px;background:var(--acc)}
+.pnl{border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;font-size:13px;min-width:0;overflow:hidden}
+.pnl .ph{display:flex;align-items:center;justify-content:space-between;padding:10px 14px 8px;font:600 11px Inter,sans-serif;letter-spacing:.08em;color:var(--dim)}
+.pnl .ph span{display:flex;gap:10px;font-size:14px}
+.srch{margin:0 12px 8px;display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line2);border-radius:7px;color:var(--faint);font-size:12.5px;background:var(--bg2)}
+.grp{padding:6px 0 2px}
+.grp>b{display:flex;align-items:center;gap:6px;padding:4px 14px;font:600 11px Inter,sans-serif;color:var(--dim);letter-spacing:.04em;text-transform:uppercase}
+.grp>b svg{font-size:12px}
+.cmd{display:flex;align-items:center;gap:9px;margin:2px 8px;padding:6px 8px;border-radius:7px;color:var(--mute);transition:background .25s,color .25s,box-shadow .25s;position:relative}
+.cmd svg.i{font-size:14px;color:var(--faint)}
+.cmd .r{margin-left:auto;display:flex;gap:7px;align-items:center;color:var(--faint);font-size:12px}
+.cmd .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent)}
+.cmd.hit{background:color-mix(in srgb,var(--acc) 16%,transparent);color:var(--fg);box-shadow:0 0 0 1px color-mix(in srgb,var(--acc) 50%,transparent) inset}
+.cmd .st{color:var(--bad)}
+.op{margin:4px 8px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--bg2);transition:border-color .3s}
+.op.hit{border-color:color-mix(in srgb,var(--acc) 60%,transparent)}
+.op .t{display:flex;align-items:center;gap:8px;color:var(--fg);font-weight:550;font-size:12.5px}
+.op .t small{margin-left:auto;color:var(--faint);font-weight:400;font-size:11px}
+.op ol{list-style:none;margin-top:6px;display:grid;gap:3px}
+.op li{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--faint)}
+.op li i{width:12px;height:12px;border-radius:3px;border:1px solid var(--line2);display:inline-flex;align-items:center;justify-content:center;font-size:9px;flex:none}
+.op li.done{color:var(--mute)}.op li.done i{background:var(--ok);border-color:var(--ok);color:var(--bg)}
+.op li.run{color:var(--fg)}.op li.run i{border-color:var(--acc);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.bar{height:4px;border-radius:2px;background:var(--panel3);overflow:hidden;margin-top:7px}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),color-mix(in srgb,var(--acc) 50%,#fff));transition:width .25s linear}
+.upm{display:flex;justify-content:space-between;font:11px "JetBrains Mono",monospace;color:var(--faint);margin-top:5px}
+.badge{font:500 10.5px "JetBrains Mono",monospace;color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent);border-radius:5px;padding:1px 6px}
+.main{display:flex;flex-direction:column;min-width:0;background:var(--bg2)}
+.edt{flex:1;padding:16px 22px;font:12.5px/1.8 "JetBrains Mono",monospace;color:var(--faint);overflow:hidden;min-height:0}
+.edt .tab{display:inline-flex;gap:8px;align-items:center;margin:-16px 0 12px -22px;padding:8px 16px;border-right:1px solid var(--line);border-bottom:1px solid var(--acc);color:var(--mute);background:var(--panel);font-family:Inter,sans-serif;font-size:12px}
+.edt .k{color:var(--acc)}.edt .s{color:var(--acc2)}
+.tpane{height:230px;border-top:1px solid var(--line);display:flex;flex-direction:column;background:var(--term)}
+.tpane .tt{display:flex;gap:18px;padding:7px 16px;font:600 10.5px Inter,sans-serif;letter-spacing:.08em;color:#6b737c;border-bottom:1px solid #1a1d21}
+.tpane .tt b{color:#c4c9cf;border-bottom:1px solid #c4c9cf;padding-bottom:5px;margin-bottom:-8px}
+.tpane .tt em{margin-left:auto;font-style:normal;color:#8a929b;letter-spacing:0;font-weight:500}
+.tpane .term{flex:1;padding:10px 16px}
+.toast{position:absolute;right:16px;bottom:16px;display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:10px;background:var(--panel);border:1px solid var(--line2);box-shadow:0 20px 40px -20px #000;font-size:12.5px;color:var(--fg);opacity:0;transform:translateY(8px);transition:.4s}
+.toast.on{opacity:1;transform:none}
+.toast svg.i{color:var(--ok);font-size:16px}
+
+/* flow steps */
+.flow3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:44px;position:relative}
+.fs{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:24px;display:flex;flex-direction:column;gap:8px;position:relative}
+.fs:not(:last-child)::after{content:"";position:absolute;right:-38px;top:42px;width:32px;height:12px;background:no-repeat center/100% 100% url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 12'%3E%3Cpath d='M1 6h28M24 1l5 5-5 5' fill='none' stroke='%23878e97' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+.fk{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.fi{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--acc);background:color-mix(in srgb,var(--acc) 10%,var(--panel2));border:1px solid color-mix(in srgb,var(--acc) 30%,var(--line))}
+.fk b{font:600 40px/1 Inter,sans-serif;letter-spacing:-.04em;color:transparent;-webkit-text-stroke:1px var(--line2)}
+.fs h3{font-size:20px;font-weight:640;letter-spacing:-.02em}
+.fs p{color:var(--dim);font-size:14.5px;line-height:1.5;min-height:2.9em}
+.fs code{font-size:12px;padding:1px 5px}
+.fm{margin-top:auto;padding-top:12px}
+.fm pre{font-size:12px;padding:12px 14px;border-radius:12px;line-height:1.65}
+.fbtn{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:10px;font-size:13px;color:var(--fg);background:color-mix(in srgb,var(--acc) 14%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--acc) 50%,transparent) inset}
+.fbtn+.fbtn{margin-top:6px}
+.fbtn svg.i{font-size:14px;color:var(--acc)}
+.fbtn.dimb{background:var(--bg2);box-shadow:0 0 0 1px var(--line) inset;color:var(--mute)}.fbtn.dimb svg.i{color:var(--faint)}
+.fbtn .dot{margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent)}
+.in .fbtn .dot{animation:pdot 1.6s ease-in-out infinite}
+@keyframes pdot{50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--ok) 5%,transparent)}}
+.fup{display:flex;justify-content:space-between;font-size:12.5px;color:var(--mute)}
+.fup .mono{font-size:11.5px;color:var(--faint)}
+.fdone{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ok);padding:5px 10px;border-radius:8px;background:color-mix(in srgb,var(--ok) 10%,transparent)}
+@media(max-width:960px){.flow3{grid-template-columns:minmax(0,1fr);gap:40px}.fs:not(:last-child)::after{right:auto;left:50%;top:auto;bottom:-34px;width:12px;height:28px;transform:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 28'%3E%3Cpath d='M6 1v24M1 20l5 5 5-5' fill='none' stroke='%23878e97' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}.fs p{min-height:0}}
+
+/* bento arts */
+.mini{border:1px solid var(--line);border-radius:12px;background:var(--bg2);padding:12px;font-size:12.5px}
+.mini+.mini{margin-top:8px}
+.row{display:flex;align-items:center;gap:8px;color:var(--mute)}
+.row .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;font:500 11.5px "JetBrains Mono",monospace;color:var(--mute);padding:4px 9px;border-radius:7px;border:1px solid var(--line2);background:var(--bg2);white-space:nowrap}
+.chip.a{color:var(--acc);border-color:color-mix(in srgb,var(--acc) 40%,transparent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.tog{width:28px;height:16px;border-radius:9px;background:var(--panel3);position:relative;flex:none}
+.tog::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--faint);transition:.3s}
+.tog.on{background:color-mix(in srgb,var(--acc) 60%,transparent)}.tog.on::after{left:14px;background:#fff}
+.in .tog.flip{animation:flip 4s ease-in-out infinite}
+.in .tog.flip::after{animation:flipk 4s ease-in-out infinite}
+@keyframes flip{0%,45%{background:var(--panel3)}55%,100%{background:color-mix(in srgb,var(--acc) 60%,transparent)}}
+@keyframes flipk{0%,45%{left:2px;background:var(--faint)}55%,100%{left:14px;background:#fff}}
+.sqlt{width:100%;border-collapse:collapse;font:11.5px "JetBrains Mono",monospace;margin-top:8px}
+.sqlt td,.sqlt th{padding:5px 8px;border-top:1px solid var(--line);text-align:left;color:var(--mute);white-space:nowrap}
+.sqlt th{color:var(--faint);font-weight:500}
+.sqlt tr{opacity:0}.in .sqlt tr{animation:fin .4s forwards}
+.in .sqlt tr:nth-child(2){animation-delay:.15s}.in .sqlt tr:nth-child(3){animation-delay:.3s}.in .sqlt tr:nth-child(4){animation-delay:.45s}
+@keyframes fin{to{opacity:1}}
+.upbar{height:6px;border-radius:3px;background:var(--panel3);overflow:hidden;margin:10px 0 6px}
+.upbar i{display:block;height:100%;width:8%;background:var(--acc);border-radius:3px}
+.in .upbar i{animation:up 5s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes up{0%{width:4%}80%,100%{width:100%}}
+.modal{border:1px solid var(--line2);border-radius:12px;background:var(--panel);padding:14px;box-shadow:0 20px 40px -24px #000;font-size:13px}
+.modal .row{color:var(--fg);font-weight:550}
+.modal p{font-size:12.5px;margin:6px 0 12px}
+.modal .bb{display:flex;gap:8px;justify-content:flex-end}
+.modal .bb span{padding:5px 12px;border-radius:7px;font-size:12px;border:1px solid var(--line2);color:var(--mute)}
+.modal .bb span.p{background:var(--acc);color:#fff;border-color:transparent}
+
+/* spec section */
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:56px;align-items:center}
+.list{list-style:none;display:grid;gap:16px;margin-top:30px}
+.list li{display:grid;grid-template-columns:22px 1fr;gap:12px;color:var(--dim);font-size:15px}
+.list li svg.i{color:var(--acc);font-size:18px;margin-top:3px}
+.list li b{color:var(--fg);font-weight:600}
+.qp{border:1px solid var(--line2);border-radius:14px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden;font-size:13px}
+.qp .in1{display:flex;gap:10px;align-items:center;margin:10px;padding:9px 12px;border:1px solid var(--acc);border-radius:8px;background:var(--bg2);font:12.5px "JetBrains Mono",monospace;color:var(--fg);min-height:40px;overflow:hidden;white-space:nowrap}
+.qp .in1 span{overflow:hidden;text-overflow:ellipsis;}
+.qp .hd{padding:6px 16px;color:var(--faint);font-size:11.5px}
+.qp .it{display:flex;gap:10px;align-items:center;padding:8px 16px;border-top:1px solid var(--line);opacity:0;transform:translateY(4px);transition:.35s;min-width:0}
+.qp .it.on{opacity:1;transform:none}
+.qp .it svg.i{font-size:15px;color:var(--acc);flex:none}
+.qp .it.del svg.i{color:var(--bad)}
+.qp .it.dl svg.i{color:var(--ok)}
+.qp .it code{background:none;border:0;padding:0;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.qp .it em{font-style:normal;color:var(--faint);font:11px "JetBrains Mono",monospace;flex:none}
+.qp .srv{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg2);border-top:1px solid var(--line);font-weight:600;font-size:12.5px;opacity:0;transition:.35s}
+.qp .srv.on{opacity:1}
+.qp .srv small{color:var(--faint);font-weight:400;margin-left:auto;font-size:11.5px}
+
+@media(max-width:960px){.vs{grid-template-columns:270px minmax(0,1fr)}.ab{display:none}.split{grid-template-columns:minmax(0,1fr);gap:36px}}
+@media(max-width:680px){
+  .vs{grid-template-columns:minmax(0,1fr);height:auto}
+  .pnl{border-right:0;border-bottom:1px solid var(--line)}
+  .edt{display:none}
+  .tpane{height:210px;border-top:0}
+  .pnl .hide-m{display:none}
+}
+
+/* install (shared component) */
+.inst{position:relative;overflow:hidden;isolation:isolate;max-width:100%;border:1px solid var(--line2);border-radius:24px;padding:72px 32px 64px;text-align:center;background:var(--panel)}
+.inst::before{content:"";position:absolute;inset:-35%;z-index:-2;pointer-events:none;filter:blur(40px);background:radial-gradient(28% 32% at 28% 72%,rgba(160,168,180,.16),transparent 70%),radial-gradient(26% 30% at 74% 78%,rgba(160,168,180,.10),transparent 70%),radial-gradient(22% 22% at 58% 26%,rgba(160,168,180,.07),transparent 70%);animation:inst-aurora 16s ease-in-out infinite alternate}
+@keyframes inst-aurora{0%{transform:translate(-5%,3%) rotate(-4deg)}100%{transform:translate(5%,-4%) rotate(6deg)}}
+.inst::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;opacity:.5;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:44px 44px;-webkit-mask-image:radial-gradient(70% 70% at 50% 60%,#000,transparent 75%);mask-image:radial-gradient(70% 70% at 50% 60%,#000,transparent 75%)}
+.inst-wm{position:absolute;right:-56px;bottom:-72px;width:320px;height:320px;object-fit:contain;filter:grayscale(1);opacity:.07;transform:rotate(-14deg);z-index:-1;pointer-events:none}
+.inst-eb{display:inline-block;font:500 12px "JetBrains Mono",monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
+.inst h2{font-size:clamp(30px,4vw,52px);letter-spacing:-.04em;line-height:1.08;font-weight:720;margin:0 auto 14px;max-width:760px;text-wrap:balance}
+.inst p{color:var(--dim);font-size:16px;line-height:1.6;max-width:600px;margin:0 auto 28px;text-wrap:pretty}
+.inst-code{text-align:left;max-width:720px;margin:0 auto 28px;background:#0d0f12;color:#c4c9cf;border:1px solid #2a2f35;border-radius:14px;padding:18px 20px;overflow:auto;font:12.5px/1.75 "JetBrains Mono",ui-monospace,monospace;white-space:pre}
+.inst-code .p{color:#6b737c}.inst-code .c{color:#6b737c}.inst-code b{color:#eceef1;font-weight:500}
+.inst-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.inst-btn{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;border-radius:11px;font:550 14.5px Inter,sans-serif;border:1px solid var(--line2);background:var(--panel2);color:var(--fg);transition:transform .2s,background .2s}
+.inst-btn:hover{transform:translateY(-1px)}
+.inst-btn.p{background:var(--fg);color:var(--bg);border-color:transparent}
+@media(max-width:680px){.inst{padding:52px 18px 44px;border-radius:20px}.inst-code{font-size:11.5px;padding:14px}.inst-wm{width:220px;height:220px;right:-40px;bottom:-50px}}
+@media (prefers-reduced-motion:reduce){.inst::before{animation:none}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="i-api" viewBox="0 0 24 24"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></symbol><symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></symbol><symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol><symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol><symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></symbol><symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></symbol><symbol id="i-flow" viewBox="0 0 24 24"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol><symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol><symbol id="i-grid" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1.5"/><rect width="7" height="7" x="14" y="3" rx="1.5"/><rect width="7" height="7" x="14" y="14" rx="1.5"/><rect width="7" height="7" x="3" y="14" rx="1.5"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3 20 12 6 21Z"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol><symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/></symbol><symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol><symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></symbol><symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol><symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></symbol></svg>
+<nav><div class="wrap">
+  <a class="brand" href="#"><img src="icon.svg" alt="">Commands Extension</a>
+  <div class="links"><a href="#features">Features</a><a href="#how">How it works</a><a href="#spec">Upload spec</a><a href="#agents">For agents</a><a href="#install">Install</a><a class="gh" href="https://github.com/PavelKhabusov/CommandsExtension"><svg class="i"><use href="#i-github"/></svg><span>GitHub</span></a></div>
+</div></nav>
+
+<header class="wrap">
+<div class="hero">
+  <span class="pill rv in"><b id="ver" hidden></b> VS Code extension · MIT</span>
+  <h1 class="rv in d1">Every project command,<br><span class="hand">one click<svg viewBox="0 0 200 14" preserveAspectRatio="none" aria-hidden="true"><path d="M3 9C40 3 86 2 122 6S170 11 197 5"/></svg></span> away</h1>
+  <p class="lead rv in d2">A sidebar of buttons for your scripts, builds and deploys. Describe them once in <code>commands-list.json</code> — or let the extension pick up <code>package.json</code> scripts and <code>.ps1</code> files — then chain them into multi-step operations and ship files to FTP/SFTP with live progress.</p>
+  <div class="btns rv in d3">
+    <a class="btn primary" href="https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension"><svg class="i"><use href="#i-download"/></svg> Install for VS Code</a>
+    <a class="btn" href="https://github.com/PavelKhabusov/CommandsExtension"><svg class="i"><use href="#i-github"/></svg> GitHub</a>
+    <a class="btn" href="https://github.com/PavelKhabusov/CommandsExtension/tree/main/docs"><svg class="i"><use href="#i-book"/></svg> Docs</a>
+  </div>
+  <div class="rv in d3"><div class="install"><span><b>$</b> code --install-extension PavelKhabusov.commands-extension</span><button class="copy" data-copy="code --install-extension PavelKhabusov.commands-extension"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div></div>
+
+  <div class="win glow rv in d4" id="demo">
+    <div class="tb"><i></i><i></i><i></i><span class="t">my-app — Visual Studio Code</span></div>
+    <div class="vs">
+      <div class="ab"><svg class="i"><use href="#i-folder"/></svg><svg class="i"><use href="#i-search"/></svg><svg class="i on"><use href="#i-terminal"/></svg><svg class="i"><use href="#i-grid"/></svg></div>
+      <div class="pnl">
+        <div class="ph">COMMANDS <span><svg class="i"><use href="#i-plus"/></svg><svg class="i"><use href="#i-upload"/></svg></span></div>
+        <div class="srch"><svg class="i"><use href="#i-search"/></svg>Search commands…</div>
+        <div class="grp"><b><svg class="i"><use href="#i-star"/></svg>Favorites</b>
+          <div class="cmd" id="c-dev"><svg class="i"><use href="#i-play"/></svg>Start dev server<span class="r"><span class="dot"></span><svg class="i st"><use href="#i-stop"/></svg></span></div>
+        </div>
+        <div class="grp"><b><svg class="i"><use href="#i-chev"/></svg>Build</b>
+          <div class="cmd" id="c-build"><svg class="i"><use href="#i-play"/></svg>Build<span class="r mono">npm</span></div>
+          <div class="cmd hide-m" id="c-test"><svg class="i"><use href="#i-play"/></svg>Run tests<span class="r mono">npm</span></div>
+          <div class="cmd hide-m"><svg class="i"><use href="#i-play"/></svg>Deploy prod<span class="r"><svg class="i"><use href="#i-lock"/></svg></span></div>
+        </div>
+        <div class="grp"><b><svg class="i"><use href="#i-chev"/></svg>Combined</b>
+          <div class="op" id="op"><div class="t"><svg class="i"><use href="#i-flow"/></svg>Build &amp; Deploy<small id="op-s">3 steps</small></div>
+            <ol><li id="s1"><i></i>command · Build</li><li id="s2"><i></i>upload · Theme → prod</li><li id="s3"><i></i>notification · Deployed</li></ol>
+            <div class="bar"><i id="op-bar"></i></div><div class="upm"><span id="op-f">idle</span><span id="op-p"></span></div>
+          </div>
+        </div>
+        <div class="grp hide-m"><b><svg class="i"><use href="#i-chev"/></svg>Server uploads</b>
+          <div class="cmd"><svg class="i"><use href="#i-upload"/></svg>Theme → prod<span class="r"><span class="badge" id="mod">⚠ 3 modified</span></span></div>
+        </div>
+      </div>
+      <div class="main">
+        <div class="edt"><div class="tab"><svg class="i"><use href="#i-terminal"/></svg>commands-list.json</div>
+<div>{</div><div>&nbsp;&nbsp;<span class="k">"commands"</span>: [</div><div>&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="k">"name"</span>: <span class="s">"Build"</span>, <span class="k">"command"</span>: <span class="s">"npm run build"</span>,</div><div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">"type"</span>: <span class="s">"terminal"</span>, <span class="k">"group"</span>: <span class="s">"Build"</span> },</div><div>&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="k">"name"</span>: <span class="s">"Start dev server"</span>, <span class="k">"stop"</span>: <span class="s">"Stop"</span> }</div><div>&nbsp;&nbsp;],</div><div>&nbsp;&nbsp;<span class="k">"combined"</span>: [ … ]</div><div>}</div></div>
+        <div class="tpane"><div class="tt"><b>TERMINAL</b><span>OUTPUT</span><em id="tname">Start dev server</em></div><div class="term" id="term"></div></div>
+      </div>
+    </div>
+    <div class="toast" id="toast"><svg class="i"><use href="#i-check"/></svg>Build &amp; Deploy finished · 3/3 steps</div>
+  </div>
+
+  <div class="strip rv">
+    <div><b>3 sources</b><span>commands-list.json, package.json scripts and *.ps1 — auto-refreshed</span></div>
+    <div><b>8 step types</b><span>command, upload, auto-upload, vscode-cmd, wait, open, sound, notification</span></div>
+    <div><b>FTP · SFTP</b><span>and FTPS — parallel transfers, mirror mode, skip unchanged</span></div>
+    <div><b>12 templates</b><span>React, Next.js, Docker, Expo, Python, Git and more, one click to add</span></div>
+  </div>
+</div>
+</header>
+
+<main class="wrap">
+<section id="how">
+  <div class="head rv"><span class="eyebrow">How it works</span><h2>Write it down once.<br>Click it <span class="hand">forever.<svg viewBox="0 0 200 14" preserveAspectRatio="none" aria-hidden="true"><path d="M3 9C40 3 86 2 122 6S170 11 197 5"/></svg></span></h2><p class="sub">No task runner to learn. A JSON file in the repo root is the whole contract — commit it and the whole team gets the same buttons.</p></div>
+  <div class="flow3">
+    <div class="fs rv"><div class="fk"><span class="fi"><svg class="i"><use href="#i-api"/></svg></span><b>01</b></div><h3>Describe</h3><p>One entry per command in <code>commands-list.json</code> — or none: npm scripts and <code>.ps1</code> are picked up.</p>
+      <div class="fm"><pre>{ <span class="k">"name"</span>: <span class="s">"Deploy"</span>,
+  <span class="k">"command"</span>: <span class="s">"./deploy.sh"</span>,
+  <span class="k">"group"</span>: <span class="s">"Ship"</span> }</pre></div></div>
+    <div class="fs rv d1"><div class="fk"><span class="fi"><svg class="i"><use href="#i-play"/></svg></span><b>02</b></div><h3>Click</h3><p>It's a button in the sidebar. Re-runs reuse their terminal.</p>
+      <div class="fm"><div class="fbtn"><svg class="i"><use href="#i-play"/></svg>Deploy<span class="dot"></span></div><div class="fbtn dimb"><svg class="i"><use href="#i-play"/></svg>Build</div></div></div>
+    <div class="fs rv d2"><div class="fk"><span class="fi"><svg class="i"><use href="#i-upload"/></svg></span><b>03</b></div><h3>Ship</h3><p>Chain steps, upload to FTP/SFTP, get notified.</p>
+      <div class="fm"><div class="fup"><span>Theme → production</span><span class="mono">100%</span></div><div class="upbar"><i></i></div><div class="fdone"><svg class="i"><use href="#i-check"/></svg>Deployed · 3 files</div></div></div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="head center rv"><span class="eyebrow">Features</span><h2>Small buttons, serious plumbing</h2><p class="sub">Everything you used to keep in a README of “how to run this” — and the deploy script you never wanted to write.</p></div>
+  <div class="bento">
+    <div class="card w4 rv"><span class="ic"><svg class="i"><use href="#i-upload"/></svg></span><h3>Server Uploads</h3><p>FTP, FTPS and SFTP targets in <code>server-uploads.local.json</code>. Files, folders, globs and excludes; a connection pool; <code>mirror</code> mode that removes stale remote files; <code>skipUnchanged</code> for content-hashed builds. Cards show exactly which files changed since the last upload — and “Upload only modified” sends just those.</p>
+      <div class="art"><div class="mini"><div class="row"><svg class="i"><use href="#i-server"/></svg><b style="color:var(--fg);font-weight:600">Theme → prod</b><span class="chip">sftp</span><span class="r"><span class="badge">⚠ 12 modified</span></span></div>
+        <div class="upbar"><i></i></div><div class="upm"><span>wp-content/themes/mytheme/style.css</span><span>4 conn · 2.1 MB/s</span></div></div></div></div>
+    <div class="card w2 rv d1"><span class="ic"><svg class="i"><use href="#i-flow"/></svg></span><h3>Combined operations</h3><p>Ordered, cancellable sequences with per-step checkboxes and <code>stopOnError</code>.</p>
+      <div class="art"><div class="mini"><div class="row"><span class="tog on"></span>command · npm run install-local</div></div><div class="mini"><div class="row"><span class="tog flip"></span>vscode-cmd · reloadWindow</div></div><div class="mini"><div class="row"><span class="tog on"></span>sound · complete</div></div></div></div>
+    <div class="card w2 rv"><span class="ic"><svg class="i"><use href="#i-stop"/></svg></span><h3>Start / stop pairs</h3><p>Bind a start command to a hidden stop command. While it runs, its card shows a red stop icon that closes the terminal and runs the stop.</p>
+      <div class="art"><div class="mini"><div class="row"><svg class="i ok"><use href="#i-play"/></svg>Start (full)<span class="r"><span class="cmd" style="margin:0;padding:0"><span class="dot"></span></span><svg class="i bad"><use href="#i-stop"/></svg></span></div></div></div></div>
+    <div class="card w2 rv d1"><span class="ic"><svg class="i"><use href="#i-lock"/></svg></span><h3>Run confirmation</h3><p>Mark critical commands as protected. They get a lock icon and a modal before anything runs.</p>
+      <div class="art"><div class="modal"><div class="row"><svg class="i warn"><use href="#i-lock"/></svg>Run “Deploy prod”?</div><p class="dim">This command requires confirmation.</p><div class="bb"><span>Cancel</span><span class="p">Run</span></div></div></div></div>
+    <div class="card w2 rv d2"><span class="ic"><svg class="i"><use href="#i-search"/></svg></span><h3>Groups, search, favorites</h3><p>Collapsible groups that remember their state, instant search across names, commands and groups, and a pinned Favorites group.</p>
+      <div class="art"><div class="chips"><span class="chip a"><svg class="i"><use href="#i-star"/></svg>Favorites</span><span class="chip">Build · 4</span><span class="chip">Dev · 3</span><span class="chip">Deploy · 2</span><span class="chip">npm scripts · 7</span></div></div></div>
+    <div class="card w3 rv"><span class="ic"><svg class="i"><use href="#i-db"/></svg></span><h3>SQL Console</h3><p>Give a server an <code>sql</code> block and get Query, Browse and Export tabs. Queries and dumps run on the server over SSH — seconds instead of minutes over the network.</p>
+      <div class="art"><div class="mini"><span class="mono" style="color:var(--acc)">SELECT</span> <span class="mono">id, title FROM posts LIMIT 3;</span>
+        <table class="sqlt"><tr><th>id</th><th>title</th><th>status</th></tr><tr><td>412</td><td>Pricing</td><td>publish</td></tr><tr><td>418</td><td>Contacts</td><td>publish</td></tr><tr><td>431</td><td>Spring sale</td><td>draft</td></tr></table></div></div></div>
+    <div class="card w3 rv d1"><span class="ic"><svg class="i"><use href="#i-bot"/></svg></span><h3>Claude Hooks Manager</h3><p>See, toggle and edit Claude Code hooks across project, local and user-global <code>settings.json</code>. Presets, copy and paste between projects.</p>
+      <div class="art"><div class="mini"><div class="row"><span class="tog on"></span><span class="mono">Stop</span> · sound complete<span class="r dim">project</span></div></div><div class="mini"><div class="row"><span class="tog flip"></span><span class="mono">Notification</span> · notify-send<span class="r dim">local</span></div></div><div class="mini"><div class="row"><span class="tog"></span><span class="mono">PreToolUse</span> · lint<span class="r dim">user</span></div></div></div></div>
+    <div class="card w6 rv"><span class="ic"><svg class="i"><use href="#i-grid"/></svg></span><h3>Auto-detection and ready-made templates</h3><p>Open any workspace and the panel is already populated. Need a starting set? The Recommended section adds a whole template — or single commands from it.</p>
+      <div class="art"><div class="chips"><span class="chip a">commands-list.json</span><span class="chip a">package.json scripts</span><span class="chip a">*.ps1</span><span class="chip">React</span><span class="chip">Node.js Backend</span><span class="chip">Next.js</span><span class="chip">Docker</span><span class="chip">Expo</span><span class="chip">Python</span><span class="chip">Git</span><span class="chip">Turborepo</span><span class="chip">Deploy</span><span class="chip">Testing</span><span class="chip">Linting</span><span class="chip">Git Hooks</span></div></div></div>
+  </div>
+</section>
+
+<section id="spec">
+  <div class="split">
+    <div class="rv"><span class="eyebrow">Quick Upload from Spec</span><h2>One line to put a file on the server</h2><p class="sub">Not every file belongs to a tracked upload. Paste a spec into <b>Commands Extension: Quick Upload from Spec</b> — an agent can write it for you — and everything for one server goes over a single connection.</p>
+      <ul class="list">
+        <li><svg class="i"><use href="#i-upload"/></svg><span><b><code>local =&gt; server:/dir</code></b> uploads a file or a whole folder, keeping its structure.</span></li>
+        <li><svg class="i"><use href="#i-download"/></svg><span><b><code>server:/path =&gt; local</code></b> pulls from the server instead.</span></li>
+        <li><svg class="i"><use href="#i-trash"/></svg><span><b><code>del server:/path</code></b> removes a file or folder — after a modal that lists exactly what was found.</span></li>
+        <li><svg class="i"><use href="#i-check"/></svg><span>Pairs separated by <code>;</code> or newlines, a live preview grouped by server, <code>#</code> comments ignored.</span></li>
+      </ul></div>
+    <div class="qp rv d1" id="qp">
+      <div class="in1"><svg class="i acc"><use href="#i-upload"/></svg><span id="qtext"></span><span class="caret"></span></div>
+      <div class="hd">Quick Upload from Spec · preview</div>
+      <div class="srv" data-k="0"><svg class="i acc"><use href="#i-server"/></svg>staging<small>1 connection · 3 actions</small></div>
+      <div class="it" data-k="1"><svg class="i"><use href="#i-upload"/></svg><code>img/logo.webm</code><em>→ /wp-content/themes/mytheme/img</em></div>
+      <div class="it" data-k="2"><svg class="i"><use href="#i-upload"/></svg><code>icons/ (24 files)</code><em>→ /img/icons</em></div>
+      <div class="it del" data-k="3"><svg class="i"><use href="#i-trash"/></svg><code>/wp-content/themes/mytheme/img/logo-old.webm</code><em>delete</em></div>
+      <div class="srv" data-k="4"><svg class="i acc"><use href="#i-server"/></svg>production<small>1 connection · 1 action</small></div>
+      <div class="it dl" data-k="5"><svg class="i"><use href="#i-download"/></svg><code>/wp-content/themes/mytheme/style.css</code><em>→ ./backup</em></div>
+    </div>
+  </div>
+</section>
+
+<section id="agents">
+  <div class="head rv"><span class="eyebrow">For agents</span><h2>Plain JSON that an <span class="hand">agent<svg viewBox="0 0 200 14" preserveAspectRatio="none" aria-hidden="true"><path d="M3 9C40 3 86 2 122 6S170 11 197 5"/></svg></span> can write</h2><p class="sub">Coding agents add a command, a combined operation or an upload spec as text — you just click the button. The file watcher picks up every change instantly.</p></div>
+  <div class="tabs rv d1">
+    <div class="th" role="tablist"><button aria-selected="true">commands-list.json</button><button aria-selected="false">combined</button><button aria-selected="false">server-uploads.local.json</button><button aria-selected="false">upload spec</button></div>
+<div class="tp on"><pre>{
+  <span class="k">"commands"</span>: [
+    { <span class="k">"name"</span>: <span class="s">"▶ Start (full)"</span>, <span class="k">"command"</span>: <span class="s">"./start.sh"</span>, <span class="k">"type"</span>: <span class="s">"terminal"</span>, <span class="k">"group"</span>: <span class="s">"App"</span>, <span class="k">"stop"</span>: <span class="s">"■ Stop"</span> },
+    { <span class="k">"name"</span>: <span class="s">"■ Stop"</span>,         <span class="k">"command"</span>: <span class="s">"./stop.sh"</span>,  <span class="k">"type"</span>: <span class="s">"terminal"</span>, <span class="k">"group"</span>: <span class="s">"App"</span>, <span class="k">"hidden"</span>: <span class="n">true</span> },
+    { <span class="k">"name"</span>: <span class="s">"Seed DB"</span>,        <span class="k">"command"</span>: <span class="s">"seed.js"</span>,    <span class="k">"type"</span>: <span class="s">"node"</span>,     <span class="k">"group"</span>: <span class="s">"Dev"</span>, <span class="k">"cwd"</span>: <span class="s">"./server"</span> },
+    { <span class="k">"name"</span>: <span class="s">"Deploy"</span>,         <span class="k">"command"</span>: <span class="s">"./scripts/deploy.ps1"</span>, <span class="k">"type"</span>: <span class="s">"pwsh"</span>, <span class="k">"group"</span>: <span class="s">"Deploy"</span> }
+  ]
+}</pre></div>
+<div class="tp"><pre>{
+  <span class="k">"combined"</span>: [
+    {
+      <span class="k">"name"</span>: <span class="s">"Install &amp; Reload"</span>,
+      <span class="k">"stopOnError"</span>: <span class="n">true</span>,
+      <span class="k">"steps"</span>: [
+        { <span class="k">"type"</span>: <span class="s">"command"</span>,    <span class="k">"name"</span>: <span class="s">"Install local"</span> },
+        { <span class="k">"type"</span>: <span class="s">"upload"</span>,     <span class="k">"key"</span>: <span class="s">"Deploy:Theme → prod"</span> },
+        { <span class="k">"type"</span>: <span class="s">"vscode-cmd"</span>, <span class="k">"commandId"</span>: <span class="s">"workbench.action.reloadWindow"</span>, <span class="k">"enabled"</span>: <span class="n">true</span> }
+      ]
+    }
+  ]
+}</pre></div>
+<div class="tp"><pre>{
+  <span class="k">"servers"</span>: [
+    { <span class="k">"name"</span>: <span class="s">"main"</span>, <span class="k">"protocol"</span>: <span class="s">"sftp"</span>, <span class="k">"host"</span>: <span class="s">"example.com"</span>, <span class="k">"user"</span>: <span class="s">"deploy"</span> }
+  ],
+  <span class="k">"uploads"</span>: [
+    {
+      <span class="k">"name"</span>: <span class="s">"Theme → prod"</span>, <span class="k">"server"</span>: <span class="s">"main"</span>,
+      <span class="k">"remoteDir"</span>: <span class="s">"/public_html/wp-content/themes/mytheme/"</span>,
+      <span class="k">"items"</span>: [<span class="s">"./wp-content/themes/mytheme/"</span>],
+      <span class="k">"exclude"</span>: [<span class="s">"**/node_modules/**"</span>, <span class="s">"**/*.log"</span>],
+      <span class="k">"mode"</span>: <span class="s">"mirror"</span>, <span class="k">"connections"</span>: <span class="n">4</span>
+    }
+  ]
+}</pre></div>
+<div class="tp"><pre><span class="c"># paste into "Commands Extension: Quick Upload from Spec"</span>
+<span class="g">/home/me/site/img/logo.webm</span> =&gt; <span class="k">main</span>:<span class="s">/public_html/img</span> ; <span class="n">del</span> <span class="k">main</span>:<span class="s">/public_html/img/logo-old.webm</span>
+<span class="k">main</span>:<span class="s">/public_html/style.css</span> =&gt; <span class="g">./backup</span></pre></div>
+  </div>
+</section>
+
+<section id="install"><div class="inst rv"><img class="inst-wm" src="icon.svg" alt=""><span class="inst-eb">Install</span><h2>Give your project a <span class="hand">control panel<svg viewBox="0 0 200 14" preserveAspectRatio="none" aria-hidden="true"><path d="M3 9C40 3 86 2 122 6S170 11 197 5"/></svg></span></h2><p>VS Code 1.85+ on Linux, macOS or Windows. Open a workspace, click the Commands icon in the Activity Bar — done.</p><pre class="inst-code"><span class="p">$</span> <b>code --install-extension PavelKhabusov.commands-extension</b></pre><div class="inst-btns"><a class="inst-btn p" href="https://marketplace.visualstudio.com/items?itemName=PavelKhabusov.commands-extension">VS Code Marketplace <svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></a><a class="inst-btn" href="https://github.com/PavelKhabusov/CommandsExtension">Source on GitHub</a></div></div></section>
+<section id="more" class="more"><div class="mh rv"><span class="eyebrow">More by me</span></div><div class="mg rv d1"><a class="mt" href="https://pavelkhabusov.github.io/pixel-guard/"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4IiB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCI+CiAgPHJlY3Qgd2lkdGg9IjEyOCIgaGVpZ2h0PSIxMjgiIHJ4PSIyOCIgZmlsbD0iIzFmMjIyNiIvPgoKICA8ZyBzdHJva2U9IiM3MTc2N2QiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBmaWxsPSJub25lIj4KICAgIDxwYXRoIGQ9Ik0xOCA0MFYyNmE4IDggMCAwIDEgOC04aDE0Ii8+CiAgICA8cGF0aCBkPSJNODggMThoMTRhOCA4IDAgMCAxIDggOHYxNCIvPgogICAgPHBhdGggZD0iTTExMCA4OHYxNGE4IDggMCAwIDEtOCA4SDg4Ii8+CiAgICA8cGF0aCBkPSJNNDAgMTEwSDI2YTggOCAwIDAgMS04LThWODgiLz4KICA8L2c+CgogIDxyZWN0IHg9IjM2IiB5PSIzNiIgd2lkdGg9IjU2IiBoZWlnaHQ9IjU2IiByeD0iMTQiIGZpbGw9IiM5YWEzYWQiLz4KICA8cGF0aCBkPSJNNTAgNjQuNWwxMCAxMCAxOS0yMCIgc3Ryb2tlPSIjMWYyMjI2IiBzdHJva2Utd2lkdGg9IjkiCiAgICAgICAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBmaWxsPSJub25lIi8+Cjwvc3ZnPgo=" alt=""><span><b>pixel-guard</b><small>Pixel-perfect QA of a live page against its Figma design — no REST API.</small></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></a><a class="mt" href="https://pavelkhabusov.github.io/Unity-Builder-Dash/"><img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB3aWR0aD0iNTMxIiBoZWlnaHQ9IjUzMSIgdmlld0JveD0iMCAwIDUzMSA1MzEiPgo8ZGVmcz4KPGxpbmVhckdyYWRpZW50IGlkPSJsaW5lYXItcGF0dGVybi0wIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSIgeDE9IjUyLjY2NTU5NyIgeTE9IjE5Ljc0IiB4Mj0iNDc4LjMzNDQwMyIgeTI9IjI2NS41Ij4KPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSJyZ2IoODQlLCA4NCUsIDg4JSkiIHN0b3Atb3BhY2l0eT0iMSIvPgo8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9InJnYig3NiUsIDc2JSwgODAlKSIgc3RvcC1vcGFjaXR5PSIxIi8+CjwvbGluZWFyR3JhZGllbnQ+CjxsaW5lYXJHcmFkaWVudCBpZD0ibGluZWFyLXBhdHRlcm4tMSIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiIHgxPSI1Mi42NjU1OTciIHkxPSIxNDIuNjIiIHgyPSIyNjUuNSIgeTI9IjUxMS4yNiI+CjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0icmdiKDYyJSwgNjIlLCA2NyUpIiBzdG9wLW9wYWNpdHk9IjEiLz4KPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSJyZ2IoNTIlLCA1MiUsIDU3JSkiIHN0b3Atb3BhY2l0eT0iMSIvPgo8L2xpbmVhckdyYWRpZW50Pgo8bGluZWFyR3JhZGllbnQgaWQ9ImxpbmVhci1wYXR0ZXJuLTIiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIiB4MT0iMjY1LjUiIHkxPSIxNDIuNjIiIHgyPSI0NzguMzM0NDAzIiB5Mj0iNTExLjI2Ij4KPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSJyZ2IoNDglLCA0OCUsIDU0JSkiIHN0b3Atb3BhY2l0eT0iMSIvPgo8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9InJnYigzOCUsIDM4JSwgNDQlKSIgc3RvcC1vcGFjaXR5PSIxIi8+CjwvbGluZWFyR3JhZGllbnQ+CjwvZGVmcz4KPHBhdGggZmlsbC1ydWxlPSJub256ZXJvIiBmaWxsPSJ1cmwoI2xpbmVhci1wYXR0ZXJuLTApIiBkPSJNIDI2NS41IDE5LjczODI4MSBMIDQ3OC4zMzU5MzggMTQyLjYyMTA5NCBMIDI2NS41IDI2NS41IEwgNTIuNjY0MDYyIDE0Mi42MjEwOTQgWiBNIDI2NS41IDE5LjczODI4MSAiLz4KPHBhdGggZmlsbC1ydWxlPSJub256ZXJvIiBmaWxsPSJ1cmwoI2xpbmVhci1wYXR0ZXJuLTEpIiBkPSJNIDUyLjY2NDA2MiAxNDIuNjIxMDk0IEwgMjY1LjUgMjY1LjUgTCAyNjUuNSA1MTEuMjYxNzE5IEwgNTIuNjY0MDYyIDM4OC4zNzg5MDYgWiBNIDUyLjY2NDA2MiAxNDIuNjIxMDk0ICIvPgo8cGF0aCBmaWxsLXJ1bGU9Im5vbnplcm8iIGZpbGw9InVybCgjbGluZWFyLXBhdHRlcm4tMikiIGQ9Ik0gNDc4LjMzNTkzOCAxNDIuNjIxMDk0IEwgNDc4LjMzNTkzOCAzODguMzc4OTA2IEwgMjY1LjUgNTExLjI2MTcxOSBMIDI2NS41IDI2NS41IFogTSA0NzguMzM1OTM4IDE0Mi42MjEwOTQgIi8+CjxwYXRoIGZpbGw9Im5vbmUiIHN0cm9rZS13aWR0aD0iMi41NiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49Im1pdGVyIiBzdHJva2U9InJnYigxMDAlLCAxMDAlLCAxMDAlKSIgc3Ryb2tlLW9wYWNpdHk9IjAuMjUiIHN0cm9rZS1taXRlcmxpbWl0PSIxMCIgZD0iTSAyNjUuNSAxOS43MzgyODEgTCA1Mi42NjQwNjIgMTQyLjYyMTA5NCAiLz4KPHBhdGggZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIyLjU2IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiIHN0cm9rZT0icmdiKDEwMCUsIDEwMCUsIDEwMCUpIiBzdHJva2Utb3BhY2l0eT0iMC4xNSIgc3Ryb2tlLW1pdGVybGltaXQ9IjEwIiBkPSJNIDI2NS41IDE5LjczODI4MSBMIDQ3OC4zMzU5MzggMTQyLjYyMTA5NCAiLz4KPHBhdGggZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIxLjUzNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49Im1pdGVyIiBzdHJva2U9InJnYigwJSwgMCUsIDAlKSIgc3Ryb2tlLW9wYWNpdHk9IjAuMSIgc3Ryb2tlLW1pdGVybGltaXQ9IjEwIiBkPSJNIDI2NS41IDI2NS41IEwgMjY1LjUgNTExLjI2MTcxOSAiLz4KPHBhdGggZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIxLjUzNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49Im1pdGVyIiBzdHJva2U9InJnYigwJSwgMCUsIDAlKSIgc3Ryb2tlLW9wYWNpdHk9IjAuMSIgc3Ryb2tlLW1pdGVybGltaXQ9IjEwIiBkPSJNIDI2NS41IDI2NS41IEwgNTIuNjY0MDYyIDE0Mi42MjEwOTQgIi8+CjxwYXRoIGZpbGw9Im5vbmUiIHN0cm9rZS13aWR0aD0iMS41MzYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJtaXRlciIgc3Ryb2tlPSJyZ2IoMCUsIDAlLCAwJSkiIHN0cm9rZS1vcGFjaXR5PSIwLjEiIHN0cm9rZS1taXRlcmxpbWl0PSIxMCIgZD0iTSAyNjUuNSAyNjUuNSBMIDQ3OC4zMzU5MzggMTQyLjYyMTA5NCAiLz4KPHBhdGggZmlsbC1ydWxlPSJub256ZXJvIiBmaWxsPSJyZ2IoMjIlLCAyMiUsIDI3JSkiIGZpbGwtb3BhY2l0eT0iMSIgZD0iTSA1Mi42NjQwNjIgMjIxLjI2MTcxOSBMIDI2NS41IDM0NC4xNDQ1MzEgTCAyNjUuNSAzODguMzc4OTA2IEwgNTIuNjY0MDYyIDI2NS41IFogTSA1Mi42NjQwNjIgMjIxLjI2MTcxOSAiLz4KPHBhdGggZmlsbC1ydWxlPSJub256ZXJvIiBmaWxsPSJyZ2IoMTglLCAxOCUsIDIzJSkiIGZpbGwtb3BhY2l0eT0iMSIgZD0iTSAyNjUuNSAzNDQuMTQ0NTMxIEwgNDc4LjMzNTkzOCAyMjEuMjYxNzE5IEwgNDc4LjMzNTkzOCAyNjUuNSBMIDI2NS41IDM4OC4zNzg5MDYgWiBNIDI2NS41IDM0NC4xNDQ1MzEgIi8+CjxwYXRoIGZpbGwtcnVsZT0ibm9uemVybyIgZmlsbD0icmdiKDgyJSwgODIlLCA4NiUpIiBmaWxsLW9wYWNpdHk9IjEiIGQ9Ik0gMTIxLjM3ODkwNiAyODguNjcxODc1IEMgMTE4LjM1NTQ2OSAyOTAuNDE3OTY5IDExMy43MjY1NjIgMjg4LjA1ODU5NCAxMTEuMDM5MDYyIDI4My40MDYyNSBDIDEwOC4zNTU0NjkgMjc4Ljc1MzkwNiAxMDguNjI4OTA2IDI3My41NjY0MDYgMTExLjY1MjM0NCAyNzEuODIwMzEyIEMgMTE0LjY3NTc4MSAyNzAuMDc0MjE5IDExOS4zMDQ2ODggMjcyLjQyOTY4OCAxMjEuOTkyMTg4IDI3Ny4wODU5MzggQyAxMjQuNjc5Njg4IDI4MS43MzgyODEgMTI0LjQwMjM0NCAyODYuOTI1NzgxIDEyMS4zNzg5MDYgMjg4LjY3MTg3NSAiLz4KPHBhdGggZmlsbC1ydWxlPSJub256ZXJvIiBmaWxsPSJyZ2IoODIlLCA4MiUsIDg2JSkiIGZpbGwtb3BhY2l0eT0iMC41NSIgZD0iTSAxNjMuOTQ1MzEyIDMxMy4yNDYwOTQgQyAxNjAuOTIxODc1IDMxNC45OTIxODggMTU2LjI5Mjk2OSAzMTIuNjM2NzE5IDE1My42MDU0NjkgMzA3Ljk4NDM3NSBDIDE1MC45MjE4NzUgMzAzLjMzMjAzMSAxNTEuMTk1MzEyIDI5OC4xNDQ1MzEgMTU0LjIxODc1IDI5Ni4zOTg0MzggQyAxNTcuMjQyMTg4IDI5NC42NTIzNDQgMTYxLjg3MTA5NCAyOTcuMDA3ODEyIDE2NC41NTg1OTQgMzAxLjY2MDE1NiBDIDE2Ny4yNDYwOTQgMzA2LjMxMjUgMTY2Ljk3MjY1NiAzMTEuNSAxNjMuOTQ1MzEyIDMxMy4yNDYwOTQgIi8+CjxwYXRoIGZpbGwtcnVsZT0ibm9uemVybyIgZmlsbD0icmdiKDgyJSwgODIlLCA4NiUpIiBmaWxsLW9wYWNpdHk9IjAuMjUiIGQ9Ik0gMjA2LjUxNTYyNSAzMzcuODI0MjE5IEMgMjAzLjQ4ODI4MSAzMzkuNTcwMzEyIDE5OC44NTkzNzUgMzM3LjIxMDkzOCAxOTYuMTcxODc1IDMzMi41NTg1OTQgQyAxOTMuNDg4MjgxIDMyNy45MDYyNSAxOTMuNzYxNzE5IDMyMi43MTg3NSAxOTYuNzg1MTU2IDMyMC45NzI2NTYgQyAxOTkuODA4NTk0IDMxOS4yMjY1NjIgMjA0LjQzNzUgMzIxLjU4MjAzMSAyMDcuMTI1IDMyNi4yMzQzNzUgQyAyMDkuODEyNSAzMzAuODkwNjI1IDIwOS41MzkwNjIgMzM2LjA3ODEyNSAyMDYuNTE1NjI1IDMzNy44MjQyMTkgIi8+Cjwvc3ZnPgo=" alt=""><span><b>Unity Builder Dash</b><small>Unity builds for Android and iOS, devices and profiler — with a CLI for agents.</small></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg></a></div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>Commands Extension · MIT · by Pavel Khabusov</span>
+  <div class="fl"><a href="https://github.com/PavelKhabusov/CommandsExtension/tree/main/docs">Docs</a><a href="https://github.com/PavelKhabusov/CommandsExtension/blob/main/CHANGELOG.md">Changelog</a><a href="https://github.com/PavelKhabusov/CommandsExtension/discussions">Discussions</a><a href="https://github.com/PavelKhabusov/CommandsExtension/issues">Issues</a></div>
+</div></footer>
+
+<script>
+(function(){
+  var RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.RM=RM;
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);if(e.target._on)e.target._on();}})},{threshold:.15,rootMargin:'0px 0px -40px 0px'});
+  window.watch=function(el,fn){if(fn)el._on=fn;if(RM){el.classList.add('in');if(fn)fn();return}io.observe(el)};
+  document.querySelectorAll('.rv,.step').forEach(function(el){watch(el)});
+  document.querySelectorAll('[data-copy]').forEach(function(b){b.addEventListener('click',function(){
+    var t=b.getAttribute('data-copy');var done=function(){var o=b.innerHTML;b.textContent='Copied';setTimeout(function(){b.innerHTML=o},1400)};
+    if(navigator.clipboard)navigator.clipboard.writeText(t).then(done,done);else done();})});
+  document.querySelectorAll('.tabs').forEach(function(t){var bs=t.querySelectorAll('.th button'),ps=t.querySelectorAll('.tp');
+    bs.forEach(function(b,i){b.addEventListener('click',function(){bs.forEach(function(x,j){x.setAttribute('aria-selected',i===j);ps[j].classList.toggle('on',i===j)})})})});
+  window.sleep=function(ms){return new Promise(function(r){setTimeout(r,ms)})};
+})();
+window.ghVersion=function(id,steps){
+  var el=document.getElementById(id);if(!el)return;var K='ver:'+location.pathname+id;
+  try{var c=JSON.parse(sessionStorage.getItem(K)||'null');if(c&&Date.now()-c.t<3600e3){el.textContent=c.v;el.hidden=false;return}}catch(e){}
+  (async function(){for(var i=0;i<steps.length;i++){try{var r=await fetch(steps[i][0]);if(!r.ok)continue;var v=steps[i][1](await r.json());
+    if(v){el.textContent=v;el.hidden=false;try{sessionStorage.setItem(K,JSON.stringify({v:v,t:Date.now()}))}catch(e){}return}}catch(e){}}})();
+};
+
+ghVersion('ver',[['https://api.github.com/repos/PavelKhabusov/CommandsExtension/releases/latest',function(j){return j.tag_name&&(/^v/.test(j.tag_name)?j.tag_name:'v'+j.tag_name)}],['https://raw.githubusercontent.com/PavelKhabusov/CommandsExtension/main/package.json',function(j){return j.version&&'v'+j.version}]]);
+(function(){
+  var term=document.getElementById('term'),tname=document.getElementById('tname');
+  function line(h){var d=document.createElement('div');d.className='ln';d.innerHTML=h;term.appendChild(d);while(term.children.length>8)term.removeChild(term.firstChild)}
+  async function type(cmd){var d=document.createElement('div');d.className='ln';term.appendChild(d);while(term.children.length>8)term.removeChild(term.firstChild);
+    for(var i=0;i<=cmd.length;i++){d.innerHTML='<span class="p">~/my-app $</span> <span class="w">'+cmd.slice(0,i)+'</span><span class="caret"></span>';await sleep(28)}d.innerHTML='<span class="p">~/my-app $</span> <span class="w">'+cmd+'</span>'}
+  function hit(id,on){var e=document.getElementById(id);if(e)e.classList.toggle('hit',on)}
+  var bar=document.getElementById('op-bar'),of=document.getElementById('op-f'),op_=document.getElementById('op-p'),ops=document.getElementById('op-s'),toast=document.getElementById('toast'),mod=document.getElementById('mod');
+  function step(n,c){var e=document.getElementById('s'+n);e.className=c||''}
+  if(RM){line('<span class="p">~/my-app $</span> <span class="w">npm run build</span>');line('<span class="g">✓</span> built in 2.4s');step(1,'done');step(2,'done');step(3,'done');bar.style.width='100%';of.textContent='done';return}
+  var files=['style.css','functions.php','img/hero.webp','js/app.min.js','inc/blocks.php'];
+  async function loop(){
+    while(true){
+      hit('c-build',true);tname.textContent='Build';await sleep(400);
+      await type('npm run build');
+      line('<span class="p">&gt;</span> my-app@1.4.0 build');await sleep(250);
+      line('<span class="p">&gt;</span> tsc -p ./ &amp;&amp; vite build');await sleep(700);
+      line('<span class="b">vite</span> 142 modules transformed.');await sleep(450);
+      line('<span class="g">✓</span> built in 2.41s');await sleep(900);hit('c-build',false);
+      hit('c-test',true);tname.textContent='Run tests';await type('npm test');await sleep(300);
+      line('<span class="g">PASS</span> src/api.test.ts');await sleep(250);line('<span class="g">PASS</span> src/ui.test.ts');await sleep(250);
+      line('Tests: <span class="g">38 passed</span>, 38 total');await sleep(900);hit('c-test',false);
+      var op=document.getElementById('op');op.classList.add('hit');ops.textContent='Running 1/3';tname.textContent='Build & Deploy';
+      step(1,'run');await type('npm run build');line('<span class="g">✓</span> built in 2.38s');await sleep(500);step(1,'done');
+      step(2,'run');ops.textContent='Running 2/3';line('<span class="c">↑</span> Theme → prod · sftp · 4 connections');
+      for(var p=0;p<=100;p+=4){bar.style.width=p+'%';of.textContent=files[Math.floor(p/21)%files.length];op_.textContent=p+'%';await sleep(70)}
+      line('<span class="g">✓</span> 3 modified files uploaded · 214 KB');mod.textContent='✓ synced';mod.style.color='var(--ok)';step(2,'done');
+      step(3,'run');ops.textContent='Running 3/3';await sleep(400);step(3,'done');ops.textContent='done';of.textContent='done';
+      toast.classList.add('on');await sleep(2600);toast.classList.remove('on');op.classList.remove('hit');
+      await sleep(800);bar.style.width='0';of.textContent='idle';op_.textContent='';ops.textContent='3 steps';step(1);step(2);step(3);mod.textContent='⚠ 3 modified';mod.style.color='';
+      term.innerHTML='';
+    }
+  }
+  watch(document.getElementById('demo'),loop);
+})();
+(function(){
+  var qp=document.getElementById('qp'),qt=document.getElementById('qtext'),items=qp.querySelectorAll('[data-k]');
+  var spec='~/site/img/logo.webm => staging:/wp-content/themes/mytheme/img ; ~/site/icons => staging:/img/icons ; del staging:/wp-content/themes/mytheme/img/logo-old.webm ; production:/wp-content/themes/mytheme/style.css => ./backup';
+  function show(n){items.forEach(function(e){e.classList.toggle('on',+e.dataset.k<n)})}
+  if(RM){qt.textContent="…"+spec.slice(-63);show(9);return}
+  async function run(){while(true){
+    show(0);var marks=[60,100,170,226];
+    for(var i=0;i<=spec.length;i+=2){var s=spec.slice(0,i);qt.textContent=s.length>64?"…"+s.slice(-63):s;var n=0;if(i>marks[0])n=2;if(i>marks[1])n=3;if(i>marks[2])n=4;if(i>=spec.length-2)n=6;show(n);await sleep(22)}
+    await sleep(4200);
+  }}
+  watch(qp,run);
+})();
+</script>
+</body>
+</html>
