@@ -532,7 +532,8 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
       }
       try {
         abort = new AbortController();
-        const r = await fetch(`${base}/commands/events`, {
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+        const r = await fetch(`${base}/commands/events?workspace=${encodeURIComponent(root)}`, {
           headers: { accept: 'text/event-stream' },
           signal: abort.signal,
         });
@@ -570,9 +571,19 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
                 workspacePath?: string;
                 name?: string;
                 stale?: boolean;
+                foreign?: boolean;
+                spec?: string;
+                id?: string;
+                commandId?: string;
+                args?: unknown[];
               };
               if (ev.type === 'run-command' && ev.workspacePath && ev.name) {
-                handleRunCommand(ev.workspacePath, ev.name, ev.stale === true);
+                if (ev.foreign) void handleForeignUpload(ev.workspacePath, ev.name);
+                else handleRunCommand(ev.workspacePath, ev.name, ev.stale === true);
+              } else if (ev.type === 'run-spec' && ev.workspacePath && ev.spec && ev.id) {
+                void runSpecForHub(ev.workspacePath, ev.spec, ev.id);
+              } else if (ev.type === 'vscode-command' && ev.workspacePath && ev.commandId) {
+                void handleVscodeCommand(ev.workspacePath, ev.commandId, ev.args ?? []);
               }
             } catch {
               /* ignore non-json frame */
@@ -592,6 +603,28 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
     stopped = true;
     abort?.abort();
   });
+}
+
+/**
+ * Run a VS Code command in the window that owns `workspacePath`, on behalf
+ * of the external API. Lets a remote client drive things only reachable
+ * from inside the editor — e.g. another extension's command that opens a
+ * view with prefilled input — without going through a vscode:// URI, which
+ * VS Code guards with a confirmation dialog and routes to an arbitrary
+ * window rather than the right workspace.
+ */
+async function handleVscodeCommand(
+  workspacePath: string,
+  commandId: string,
+  args: unknown[],
+): Promise<void> {
+  const myRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!myRoot || myRoot !== workspacePath) return;
+  try {
+    await vscode.commands.executeCommand(commandId, ...(Array.isArray(args) ? args : []));
+  } catch (err) {
+    console.error(`[commandsExtension] vscode-command ${commandId} failed:`, err);
+  }
 }
 
 async function handleRunCommand(
@@ -662,6 +695,27 @@ async function handleRunCommand(
     }
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Full upload for a workspace that has no window of its own. The hub picks
+ * exactly one connected window to do it; changed-files-only uploads still
+ * need the owning window, since only it tracks what was modified.
+ */
+async function handleForeignUpload(workspacePath: string, name: string): Promise<void> {
+  if (!uploadRunner) return;
+  const cfg = vscode.workspace.getConfiguration('commandsExtension');
+  const uploadsFile = cfg.get<string>('uploadsFile', 'server-uploads.local.json');
+  const { loadUploads, resolveServer } = await import('./uploadsProvider');
+  const ud = await loadUploads(workspacePath, uploadsFile);
+  for (const g of ud.groups) {
+    for (const u of g.uploads) {
+      if (u.name !== name) continue;
+      const resolved = resolveServer(u, ud.servers);
+      if (resolved) await uploadRunner.run(workspacePath, resolved);
+      return;
+    }
   }
 }
 
@@ -1436,15 +1490,36 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
   }
   if (!text) return;
 
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const jobs = buildSpecJobs(text, servers, root);
+  for (const e of jobs.errors) vscode.window.showErrorMessage(e);
+
+  for (const { server, files } of jobs.buckets.values()) {
+    await runQuickUpload(server, files, '');
+  }
+  for (const { server, targets } of jobs.downloads.values()) {
+    await runQuickDownload(server, targets);
+  }
+  for (const { server, paths } of jobs.deletes.values()) {
+    await runQuickDelete(server, paths);
+  }
+}
+
+interface SpecJobs {
+  buckets: Map<string, { server: ServerDefinition; files: QuickFile[] }>;
+  deletes: Map<string, { server: ServerDefinition; paths: string[] }>;
+  downloads: Map<string, { server: ServerDefinition; targets: DownloadTarget[] }>;
+  errors: string[];
+}
+
+function buildSpecJobs(text: string, servers: ServerDefinition[], root: string | undefined): SpecJobs {
   const lines = text.split(/[\n;]+/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
 
   // Group every pair by server so all files heading to the same server go over a
   // SINGLE connection in one run — even when their remote dirs differ. Each pair's
   // remoteDir is folded into the file's remoteRel (a full absolute remote path),
   // and the run is invoked with an empty remoteDir so that path is used verbatim.
-  const buckets = new Map<string, { server: ServerDefinition; files: QuickFile[] }>();
-  const deletes = new Map<string, { server: ServerDefinition; paths: string[] }>();
-  const downloads = new Map<string, { server: ServerDefinition; targets: DownloadTarget[] }>();
+  const jobs: SpecJobs = { buckets: new Map(), deletes: new Map(), downloads: new Map(), errors: [] };
   for (const line of lines) {
     const g = line.match(/^([^:/\\]+):(.+?)\s*=>\s*(.+)$/);
     if (g && servers.some((s) => s.name === g[1].trim())) {
@@ -1452,13 +1527,12 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
       const remotePath = g[2].trim();
       let localDir = g[3].trim();
       if (!path.isAbsolute(localDir)) {
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (!root) { vscode.window.showErrorMessage(`Relative local dir needs an open workspace: ${line}`); continue; }
+        if (!root) { jobs.errors.push(`Relative local dir needs an open workspace: ${line}`); continue; }
         localDir = path.join(root, localDir);
       }
-      const bucket = downloads.get(server.name) || { server, targets: [] };
+      const bucket = jobs.downloads.get(server.name) || { server, targets: [] };
       bucket.targets.push({ remotePath, localDir });
-      downloads.set(server.name, bucket);
+      jobs.downloads.set(server.name, bucket);
       continue;
     }
     const d = line.match(/^del\s+([^:]+):(.+)$/i);
@@ -1466,19 +1540,19 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
       const serverName = d[1].trim();
       const target = d[2].trim();
       const server = servers.find((s) => s.name === serverName);
-      if (!server) { vscode.window.showErrorMessage(`Unknown server: ${serverName}`); continue; }
-      const bucket = deletes.get(serverName) || { server, paths: [] };
+      if (!server) { jobs.errors.push(`Unknown server: ${serverName}`); continue; }
+      const bucket = jobs.deletes.get(serverName) || { server, paths: [] };
       bucket.paths.push(target);
-      deletes.set(serverName, bucket);
+      jobs.deletes.set(serverName, bucket);
       continue;
     }
     const m = line.match(/^(.+?)\s*=>\s*([^:]+):(.+)$/);
-    if (!m) { vscode.window.showErrorMessage(`Bad spec line: ${line}`); continue; }
+    if (!m) { jobs.errors.push(`Bad spec line: ${line}`); continue; }
     const localPath = m[1].trim();
     const serverName = m[2].trim();
     const remoteDir = m[3].trim();
     const server = servers.find((s) => s.name === serverName);
-    if (!server) { vscode.window.showErrorMessage(`Unknown server: ${serverName}`); continue; }
+    if (!server) { jobs.errors.push(`Unknown server: ${serverName}`); continue; }
     let pairFiles: QuickFile[];
     try {
       const st = fs.statSync(localPath);
@@ -1486,23 +1560,56 @@ async function quickUploadFromSpec(spec?: string, prefill?: string): Promise<voi
         ? walkFolder(localPath)
         : [{ localAbs: localPath, remoteRel: path.basename(localPath) }];
     } catch {
-      vscode.window.showErrorMessage(`Local path not found: ${localPath}`); continue;
+      jobs.errors.push(`Local path not found: ${localPath}`); continue;
     }
-    const bucket = buckets.get(serverName) || { server, files: [] };
+    const bucket = jobs.buckets.get(serverName) || { server, files: [] };
     for (const f of pairFiles) {
       bucket.files.push({ localAbs: f.localAbs, remoteRel: joinPosix(remoteDir, f.remoteRel) });
     }
-    buckets.set(serverName, bucket);
+    jobs.buckets.set(serverName, bucket);
   }
+  return jobs;
+}
 
-  for (const { server, files } of buckets.values()) {
-    await runQuickUpload(server, files, '');
-  }
-  for (const { server, targets } of downloads.values()) {
-    await runQuickDownload(server, targets);
-  }
-  for (const { server, paths } of deletes.values()) {
-    await runQuickDelete(server, paths);
+/**
+ * Run a spec on behalf of the external hub: no dialogs (the hub already showed
+ * the preview and got the confirmation), servers from `workspacePath`'s
+ * uploads file, progress and the outcome reported back to the hub.
+ */
+async function runSpecForHub(workspacePath: string, text: string, id: string): Promise<void> {
+  const report = (status: 'running' | 'done' | 'error', message: string) =>
+    externalApiPost('/events/spec-progress', { id, workspacePath, status, message });
+  try {
+    const { servers } = await loadUploads(workspacePath, quickUploadsFileName());
+    const jobs = buildSpecJobs(text, servers, workspacePath);
+    if (jobs.errors.length) {
+      report('error', jobs.errors.join('\n'));
+      return;
+    }
+    const done: string[] = [];
+    for (const { server, files } of jobs.buckets.values()) {
+      report('running', `Uploading ${files.length} file(s) → ${server.name}`);
+      await uploadFilesTo(server, files, '', (p) => {
+        if (p.status === 'running' && typeof p.filesDone === 'number') {
+          report('running', `Uploading → ${server.name} ${p.filesDone}/${p.filesTotal}${p.currentFile ? ' · ' + p.currentFile : ''}`);
+        }
+      }, new AbortController().signal);
+      markQuickUploadSynced(files).catch(() => undefined);
+      done.push(`uploaded ${files.length} file(s) → ${server.name}`);
+    }
+    for (const { server, targets } of jobs.downloads.values()) {
+      report('running', `Downloading from ${server.name}`);
+      const got = await downloadRemotePaths(server, targets, () => undefined, new AbortController().signal);
+      done.push(`downloaded ${got} file(s) ← ${server.name}`);
+    }
+    for (const { server, paths } of jobs.deletes.values()) {
+      report('running', `Deleting on ${server.name}`);
+      const removed = await deleteRemotePaths(server, paths, () => undefined, new AbortController().signal);
+      done.push(`deleted ${removed} path(s) on ${server.name}`);
+    }
+    report('done', done.join('\n') || 'nothing to do');
+  } catch (e) {
+    report('error', (e as Error).message);
   }
 }
 
@@ -1685,7 +1792,10 @@ export function activate(context: vscode.ExtensionContext): void {
   uploadStalenessTracker = new UploadStalenessTracker(context, uploadStalenessBus);
   uploadRunner = new UploadRunner(
     (p) => uploadProgressBus.emit(p),
-    (key, filePaths, partial, scope) => uploadStalenessTracker!.onUploadDone(key, filePaths, partial, scope)
+    (key, filePaths, partial, scope) => {
+      if (scope.workspaceRoot !== vscode.workspace.workspaceFolders?.[0]?.uri.fsPath) return;
+      uploadStalenessTracker!.onUploadDone(key, filePaths, partial, scope);
+    }
   );
 
   combinedOpRunner = new CombinedOpRunner(
