@@ -59,6 +59,7 @@ export function resolveServer(
     mode: upload.mode,
     protectRemote: upload.protectRemote,
     skipUnchanged: upload.skipUnchanged,
+    skipSameHash: upload.skipSameHash,
     connections: upload.connections,
   };
 }
@@ -98,6 +99,7 @@ export async function loadUploads(workspaceRoot: string, configFileName: string)
     mode: u.mode,
     protectRemote: u.protectRemote,
     skipUnchanged: u.skipUnchanged,
+    skipSameHash: u.skipSameHash,
     connections: u.connections,
   }));
 

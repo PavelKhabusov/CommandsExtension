@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import * as ftp from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
@@ -128,22 +129,38 @@ function dirsOf(items: ResolvedItem[]): string[] {
 function filterUnchanged(
   items: ResolvedItem[],
   remote: RemoteEntry[] | null,
-  skipGlobs: RegExp[]
+  skipGlobs: RegExp[],
+  sameHash: Set<string> = new Set()
 ): { toUpload: ResolvedItem[]; skipped: number } {
-  if (!remote || skipGlobs.length === 0) return { toUpload: items, skipped: 0 };
+  if (skipGlobs.length === 0 && sameHash.size === 0) return { toUpload: items, skipped: 0 };
   const remoteSizes = new Map<string, number>();
-  for (const e of remote) if (!e.isDir) remoteSizes.set(e.rel, e.size);
+  for (const e of remote ?? []) if (!e.isDir) remoteSizes.set(e.rel, e.size);
   const toUpload: ResolvedItem[] = [];
   let skipped = 0;
   for (const it of items) {
     const rel = normalizeRel(it.relativeFromBase);
-    if (matchesAny(rel, skipGlobs) && remoteSizes.get(rel) === safeSize(it.absolutePath)) {
+    const size = safeSize(it.absolutePath);
+    const sizeSame = remoteSizes.get(rel) === size;
+    if ((remote && matchesAny(rel, skipGlobs) && sizeSame) || (sameHash.has(rel) && (!remote || sizeSame))) {
       skipped += 1;
     } else {
       toUpload.push(it);
     }
   }
   return { toUpload, skipped };
+}
+
+// skipSameHash: sha1 файлов, залитых в прошлый раз, — пропускаем те, что не изменились с последней заливки
+function hashManifestPath(workspaceRoot: string, key: string): string {
+  return path.join(workspaceRoot, '.vscode', 'upload-hashes', key.replace(/[^\w.-]+/g, '_') + '.json');
+}
+
+function sha1File(p: string): string | null {
+  try { return crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex'); } catch { return null; }
+}
+
+function readHashManifest(file: string): Record<string, string> {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
 }
 
 export class UploadRunner {
@@ -234,10 +251,28 @@ export class UploadRunner {
       // Точечная заливка сама знает состав — серверный скан skipUnchanged не нужен.
       if (fileFilter) upload = { ...upload, skipUnchanged: [] };
 
+      const hashGlobs = fileFilter ? [] : (upload.skipSameHash ?? []).map(globToRegExp);
+      const manifestFile = hashManifestPath(workspaceRoot, key);
+      const prevHashes = hashGlobs.length ? readHashManifest(manifestFile) : {};
+      const nextHashes: Record<string, string> = {};
+      const sameHash = new Set<string>();
+      for (const it of hashGlobs.length ? items : []) {
+        const rel = normalizeRel(it.relativeFromBase);
+        if (!matchesAny(rel, hashGlobs)) continue;
+        const h = sha1File(it.absolutePath);
+        if (!h) continue;
+        nextHashes[rel] = h;
+        if (prevHashes[rel] === h) sameHash.add(rel);
+      }
+
       if (upload.protocol === 'sftp') {
-        await this._runSftp(upload, password, items, emit, ctrl.signal, mirror);
+        await this._runSftp(upload, password, items, emit, ctrl.signal, mirror, sameHash);
       } else {
-        await this._runFtp(upload, password, items, emit, ctrl.signal, mirror);
+        await this._runFtp(upload, password, items, emit, ctrl.signal, mirror, sameHash);
+      }
+      if (hashGlobs.length && !ctrl.signal.aborted && this._lastStatus.get(key)?.status === 'done') {
+        fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
+        fs.writeFileSync(manifestFile, JSON.stringify(nextHashes));
       }
       this._onFilesUploaded?.(
         key,
@@ -261,7 +296,8 @@ export class UploadRunner {
     items: ResolvedItem[],
     emit: (p: Partial<UploadProgress> & { status: UploadStatus }) => void,
     signal: AbortSignal,
-    mirror = false
+    mirror = false,
+    sameHash: Set<string> = new Set()
   ): Promise<void> {
     const connections = clampConnections(upload.connections, 4);
     const skipGlobs = (upload.skipUnchanged ?? []).map(globToRegExp);
@@ -317,7 +353,7 @@ export class UploadRunner {
         }
       }
 
-      const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs);
+      const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs, sameHash);
 
       // Соединения уже открыты под скан; добираем, если их не хватает
       const poolSize = Math.min(connections, Math.max(1, toUpload.length));
@@ -564,7 +600,8 @@ export class UploadRunner {
     items: ResolvedItem[],
     emit: (p: Partial<UploadProgress> & { status: UploadStatus }) => void,
     signal: AbortSignal,
-    mirror = false
+    mirror = false,
+    sameHash: Set<string> = new Set()
   ): Promise<void> {
     const connections = clampConnections(upload.connections, 2);
     const skipGlobs = (upload.skipUnchanged ?? []).map(globToRegExp);
@@ -614,7 +651,7 @@ export class UploadRunner {
         }
       }
 
-      const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs);
+      const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs, sameHash);
 
       const poolSize = Math.min(connections, Math.max(1, toUpload.length));
       while (clients.length < poolSize) {

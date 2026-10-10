@@ -580,6 +580,10 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
               if (ev.type === 'run-command' && ev.workspacePath && ev.name) {
                 if (ev.foreign) void handleForeignUpload(ev.workspacePath, ev.name);
                 else handleRunCommand(ev.workspacePath, ev.name, ev.stale === true);
+              } else if (ev.type === 'stop-command' && ev.workspacePath && ev.name) {
+                if (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath === ev.workspacePath) {
+                  TerminalManager.getInstance().closeTerminal(ev.name);
+                }
               } else if (ev.type === 'run-spec' && ev.workspacePath && ev.spec && ev.id) {
                 void runSpecForHub(ev.workspacePath, ev.spec, ev.id);
               } else if (ev.type === 'vscode-command' && ev.workspacePath && ev.commandId) {

@@ -64,6 +64,12 @@ export interface UploadDefinition {
    * only what actually changed.
    */
   skipUnchanged?: string[];
+  /**
+   * Glob patterns: skip a file whose sha1 matches the one recorded after the
+   * previous successful full upload (manifest in .vscode/upload-hashes/).
+   * Use for non-hashed build output (html, txt) that rebuilds byte-identical.
+   */
+  skipSameHash?: string[];
   /** Parallel connections for the transfer (1–8, default 4 for ftp/ftps, 2 for sftp). */
   connections?: number;
 }
@@ -83,6 +89,7 @@ export interface ResolvedUpload {
   mode?: 'upload' | 'mirror';
   protectRemote?: string[];
   skipUnchanged?: string[];
+  skipSameHash?: string[];
   connections?: number;
 }
 
