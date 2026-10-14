@@ -162,5 +162,7 @@ export interface UploadProgress {
   filesTotal?: number;
   percent?: number;
   speedBps?: number;
+  /** Итог завершённой заливки одной строкой (файлы, МБ, время, скорость). */
+  summary?: string;
   finishedAt?: number;
 }

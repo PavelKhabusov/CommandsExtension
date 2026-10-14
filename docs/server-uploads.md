@@ -63,7 +63,7 @@ Define per-project FTP / FTPS / SFTP / SSH (rsync) upload targets in `server-upl
 FTP sends small files one round-trip at a time (~0.16 MB/s on a far shared host).
 With `"protocol": "ssh"` — or `"uploadVia": "ssh"` on an existing FTP server — uploads
 run through the system `rsync` over SSH with **your own key** (ssh-agent / `~/.ssh`),
-no password in the config. Requirements: `rsync` ≥ 3.2.3 locally (or set
+no password in the config. Requirements: `rsync` locally (or set
 `commandsExtension.rsyncPath`) and on the server; key login works (`ssh user@host`).
 
 ```json

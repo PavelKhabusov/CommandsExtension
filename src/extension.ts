@@ -517,6 +517,9 @@ function externalApiPost(path: string, payload: unknown): void {
   req.end();
 }
 
+/** Hub requests this build understands — lets the hub spot windows running an older one. */
+const HUB_CAPS = 'run-spec,foreign-upload,stop-command,cancel-upload';
+
 function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.Disposable {
   // Subscribe to /panel/events on the external hub so it can trigger our
   // commands natively inside VS Code (instead of spawning detached).
@@ -533,7 +536,7 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
       try {
         abort = new AbortController();
         const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-        const r = await fetch(`${base}/commands/events?workspace=${encodeURIComponent(root)}`, {
+        const r = await fetch(`${base}/commands/events?workspace=${encodeURIComponent(root)}&caps=${HUB_CAPS}`, {
           headers: { accept: 'text/event-stream' },
           signal: abort.signal,
         });
@@ -572,6 +575,7 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
                 name?: string;
                 stale?: boolean;
                 foreign?: boolean;
+                uploadKey?: string;
                 spec?: string;
                 id?: string;
                 commandId?: string;
@@ -580,6 +584,13 @@ function installExternalApiSubscriber(context: vscode.ExtensionContext): vscode.
               if (ev.type === 'run-command' && ev.workspacePath && ev.name) {
                 if (ev.foreign) void handleForeignUpload(ev.workspacePath, ev.name);
                 else handleRunCommand(ev.workspacePath, ev.name, ev.stale === true);
+              } else if (ev.type === 'cancel-upload' && ev.uploadKey) {
+                // Whichever window runs it (its own or another workspace's) cancels it.
+                if (uploadRunner?.isRunning(ev.uploadKey)) uploadRunner.cancel(ev.uploadKey);
+              } else if (ev.type === 'cancel-combined' && ev.workspacePath && ev.name) {
+                if (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath === ev.workspacePath && combinedOpRunner?.isRunning(ev.name)) {
+                  combinedOpRunner.cancel(ev.name);
+                }
               } else if (ev.type === 'stop-command' && ev.workspacePath && ev.name) {
                 if (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath === ev.workspacePath) {
                   TerminalManager.getInstance().closeTerminal(ev.name);
@@ -725,6 +736,31 @@ async function handleForeignUpload(workspacePath: string, name: string): Promise
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+const combinedUploadKeys = new Set<string>();
+let uploadsOutput: vscode.OutputChannel | undefined;
+
+function uploadsLog(line: string): void {
+  if (!uploadsOutput) uploadsOutput = vscode.window.createOutputChannel('Commands Extension: Uploads');
+  uploadsOutput.appendLine(`[${new Date().toLocaleTimeString()}] ${line}`);
+}
+
+function installSummaryReporter(): vscode.Disposable[] {
+  return [
+    uploadProgressBus.subscribe((p) => {
+      if (p.status === 'error') { uploadsLog(`✗ ${p.uploadKey}: ${p.message ?? 'error'}`); return; }
+      if (p.status !== 'done' || !p.summary) return;
+      uploadsLog(`✓ ${p.uploadKey}: ${p.message ?? p.summary}`);
+      if (p.uploadKey.startsWith('__') || combinedUploadKeys.has(p.uploadKey)) return;
+      vscode.window.showInformationMessage(`Заливка «${p.uploadKey}»: ${p.summary}`);
+    }),
+    combinedOpProgressBus.subscribe((p) => {
+      if (p.status !== 'done' || !p.summary) return;
+      uploadsLog(`✓ «${p.opName}» завершено:\n    ${p.summary.split('\n').join('\n    ')}`);
+      vscode.window.showInformationMessage(`«${p.opName}» завершено — ${p.summary.split('\n').join('; ')}`);
+    }),
+  ];
 }
 
 function installExternalApiForwarder(): vscode.Disposable {
@@ -1360,7 +1396,9 @@ async function runQuickUpload(server: ServerDefinition, files: QuickFile[], remo
       const ac = new AbortController();
       token.onCancellationRequested(() => ac.abort());
       try {
+        let summary = '';
         await uploadFilesTo(server, files, remoteDir, (p) => {
+          if (p.summary) summary = p.summary;
           if (p.status === 'running') {
             const pct = typeof p.percent === 'number' ? `${Math.round(p.percent)}%` : '';
             const df = typeof p.filesDone === 'number' ? ` (${p.filesDone}/${p.filesTotal})` : '';
@@ -1369,7 +1407,7 @@ async function runQuickUpload(server: ServerDefinition, files: QuickFile[], remo
             progress.report({ message: p.message });
           }
         }, ac.signal);
-        vscode.window.showInformationMessage(`Uploaded ${files.length} file(s) to ${target}`);
+        vscode.window.showInformationMessage(`${target}: ${summary || `залито ${files.length} файл(ов)`}`);
         // Non-fatal: a tracker hiccup must not turn a successful upload into an error toast.
         markQuickUploadSynced(files).catch(() => undefined);
       } catch (e) {
@@ -1593,13 +1631,15 @@ async function runSpecForHub(workspacePath: string, text: string, id: string): P
     const done: string[] = [];
     for (const { server, files } of jobs.buckets.values()) {
       report('running', `Uploading ${files.length} file(s) → ${server.name}`);
+      let summary = '';
       await uploadFilesTo(server, files, '', (p) => {
+        if (p.summary) summary = p.summary;
         if (p.status === 'running' && typeof p.filesDone === 'number') {
           report('running', `Uploading → ${server.name} ${p.filesDone}/${p.filesTotal}${p.currentFile ? ' · ' + p.currentFile : ''}`);
         }
       }, new AbortController().signal);
       markQuickUploadSynced(files).catch(() => undefined);
-      done.push(`uploaded ${files.length} file(s) → ${server.name}`);
+      done.push(`→ ${server.name}: ${summary || `залито ${files.length} файл(ов)`}`);
     }
     for (const { server, targets } of jobs.downloads.values()) {
       report('running', `Downloading from ${server.name}`);
@@ -1834,8 +1874,16 @@ export function activate(context: vscode.ExtensionContext): void {
           if (!u) continue;
           const resolved = resolveServer(u, ud.servers);
           if (!resolved) throw new Error(`upload "${key}" has unresolved server`);
-          await uploadRunner.run(wsRoot, resolved, fileFilter);
-          return;
+          combinedUploadKeys.add(key);
+          try {
+            await uploadRunner.run(wsRoot, resolved, fileFilter);
+          } finally {
+            combinedUploadKeys.delete(key);
+          }
+          const last = uploadRunner.getLastStatus(key);
+          if (last?.status === 'error') throw new Error(last.message ?? `upload "${key}" failed`);
+          if (last?.status === 'cancelled') throw new Error('cancelled');
+          return last?.summary;
         }
         throw new Error(`upload "${key}" not found`);
       },
@@ -1858,12 +1906,15 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   );
 
-  context.subscriptions.push(installExternalApiForwarder());
+  context.subscriptions.push(installExternalApiForwarder(), ...installSummaryReporter());
   context.subscriptions.push(installExternalApiSubscriber(context));
 
   // Forward combined-op progress to the hub (no-op when externalApiUrl unset).
   context.subscriptions.push(
-    combinedOpProgressBus.subscribe((p) => externalApiPost('/events/combined-progress', p)),
+    combinedOpProgressBus.subscribe((p) => externalApiPost('/events/combined-progress', {
+      ...p,
+      workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    })),
   );
 
   // Re-publish commands (with refreshed per-upload staleness + recommendations)

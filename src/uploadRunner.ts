@@ -13,6 +13,13 @@ import {
 } from './sshTransport';
 
 /**
+ * FTP socket timeout. The control socket sits idle while a file goes over
+ * the data socket, so on a slow, far-away link (300 ms RTT, ~120 KB/s) a
+ * few-MB file outlasted 30 s and failed with "Timeout (control socket)".
+ */
+const FTP_TIMEOUT_MS = 180_000;
+
+/**
  * Ask the external hub (commandsExtension.externalApiUrl) to prepare the
  * network (stop the VPN if needed) before we open the FTP/SFTP connection.
  * The hub blocks its 204 until the network actually reports ready, so by the
@@ -117,6 +124,30 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
   return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
 }
+
+function ruFiles(n: number): string {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return `${n} файл`;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} файла`;
+  return `${n} файлов`;
+}
+
+function ruDuration(sec: number): string {
+  if (sec < 60) return `${sec.toFixed(1)} с`;
+  const m = Math.floor(sec / 60);
+  return `${m} мин ${Math.round(sec - m * 60)} с`;
+}
+
+export function formatUploadSummary(s: { files: number; bytes: number; seconds: number; skipped?: number }): string {
+  const mb = s.bytes / (1024 * 1024);
+  const secs = Math.max(0.001, s.seconds);
+  const mbStr = mb < 10 ? mb.toFixed(2) : mb.toFixed(1);
+  let out = `залито ${ruFiles(s.files)}, ${mbStr} МБ за ${ruDuration(secs)} (${(mb / secs).toFixed(2)} МБ/с)`;
+  if (s.skipped) out += `, пропущено ${s.skipped} без изменений`;
+  return out;
+}
+
+export { ruDuration as formatDurationRu };
 
 /** Уникальные директории (rel, posix) заливаемых файлов — для точечного скана. */
 function dirsOf(items: ResolvedItem[]): string[] {
@@ -356,6 +387,10 @@ export class UploadRunner {
     ) => void
   ) {}
 
+  public getLastStatus(key: string): UploadProgress | undefined {
+    return this._lastStatus.get(key);
+  }
+
   public getLastStatuses(): UploadProgress[] {
     return Array.from(this._lastStatus.values());
   }
@@ -560,13 +595,13 @@ export class UploadRunner {
       }
 
       const elapsed = Math.max(0.001, (Date.now() - startedAt) / 1000);
-      const unchanged = filesTotal - res.filesTransferred + skippedHash;
+      const unchanged = Math.max(0, filesTotal - res.filesTransferred) + skippedHash;
+      const summary = formatUploadSummary({ files: res.filesTransferred, bytes: res.bytes, seconds: elapsed, skipped: unchanged }) +
+        (mirror ? `, удалено устаревших: ${deleted}` : '');
       emit({
         status: 'done',
-        message:
-          `rsync: uploaded ${res.filesTransferred} file(s), ${formatBytes(res.bytes)} in ${elapsed.toFixed(1)}s` +
-          (unchanged > 0 ? `, skipped ${unchanged} unchanged` : '') +
-          (mirror ? `, mirror: removed ${deleted} stale` : ''),
+        message: `rsync: ${summary}`,
+        summary,
         bytes: res.bytes,
         bytesTotal: totalBytes,
         filesDone: res.filesTransferred,
@@ -597,7 +632,7 @@ export class UploadRunner {
     const base = upload.remoteDir.replace(/\/+$/, '');
 
     const openClient = async (): Promise<ftp.Client> => {
-      const c = new ftp.Client(30_000);
+      const c = new ftp.Client(FTP_TIMEOUT_MS);
       c.ftp.verbose = false;
       await c.access({
         host: upload.host,
@@ -764,13 +799,12 @@ export class UploadRunner {
       }
 
       const elapsed = Math.max(1, (Date.now() - startedAt) / 1000);
+      const summary = formatUploadSummary({ files: filesDone, bytes: transferredTotal, seconds: (Date.now() - startedAt) / 1000, skipped }) +
+        (mirror ? `, удалено устаревших: ${deleted}` : '');
       emit({
         status: 'done',
-        message:
-          `Uploaded ${filesDone} file(s), ${formatBytes(transferredTotal)} in ${elapsed.toFixed(1)}s` +
-          (skipped > 0 ? `, skipped ${skipped} unchanged` : '') +
-          (mirror ? `, mirror: removed ${deleted} stale` : '') +
-          (scan ? ` (${scanSummary(scan)})` : ''),
+        message: summary + (scan ? ` (${scanSummary(scan)})` : ''),
+        summary,
         bytes: transferredTotal,
         bytesTotal: totalBytes,
         filesDone,
@@ -990,13 +1024,12 @@ export class UploadRunner {
       }
 
       const elapsed = Math.max(1, (Date.now() - startedAt) / 1000);
+      const summary = formatUploadSummary({ files: filesDone, bytes: transferredTotal, seconds: (Date.now() - startedAt) / 1000, skipped }) +
+        (mirror ? `, удалено устаревших: ${deleted}` : '');
       emit({
         status: 'done',
-        message:
-          `Uploaded ${filesDone} file(s), ${formatBytes(transferredTotal)} in ${elapsed.toFixed(1)}s` +
-          (skipped > 0 ? `, skipped ${skipped} unchanged` : '') +
-          (mirror ? `, mirror: removed ${deleted} stale` : '') +
-          (scan ? ` (${scanSummary(scan)})` : ''),
+        message: summary + (scan ? ` (${scanSummary(scan)})` : ''),
+        summary,
         bytes: transferredTotal,
         bytesTotal: totalBytes,
         filesDone,
@@ -1175,7 +1208,7 @@ export async function listRemoteDir(
     }
   }
 
-  const c = new ftp.Client(30_000);
+  const c = new ftp.Client(FTP_TIMEOUT_MS);
   c.ftp.verbose = false;
   try {
     await c.access({
@@ -1209,7 +1242,7 @@ export async function remoteMkdir(server: ServerDefinition, dir: string): Promis
     }
     return;
   }
-  const c = new ftp.Client(30_000);
+  const c = new ftp.Client(FTP_TIMEOUT_MS);
   c.ftp.verbose = false;
   try {
     await c.access({ host: server.host, port, user: server.user, password: server.password, secure: server.protocol === 'ftps' });
@@ -1304,7 +1337,7 @@ export async function deleteRemotePaths(
     return removed;
   }
 
-  const c = new ftp.Client(30_000);
+  const c = new ftp.Client(FTP_TIMEOUT_MS);
   c.ftp.verbose = false;
   const onAbort = () => c.close();
   signal?.addEventListener('abort', onAbort);
@@ -1398,7 +1431,7 @@ export async function downloadRemotePaths(
     return done;
   }
 
-  const c = new ftp.Client(30_000);
+  const c = new ftp.Client(FTP_TIMEOUT_MS);
   c.ftp.verbose = false;
   const onAbort = () => c.close();
   signal?.addEventListener('abort', onAbort);
@@ -1491,7 +1524,8 @@ export async function uploadFilesTo(
         signal
       );
       done = total;
-      emit({ status: 'done', filesDone: done, filesTotal: total, bytes: res.bytes, percent: 100, message: `rsync: ${res.filesTransferred} changed of ${total} file(s)` });
+      const summary = formatUploadSummary({ files: res.filesTransferred, bytes: res.bytes, seconds: res.seconds, skipped: Math.max(0, total - res.filesTransferred) });
+      emit({ status: 'done', filesDone: done, filesTotal: total, bytes: res.bytes, percent: 100, message: `rsync: ${summary}`, summary });
       viaSsh = true;
     } catch (e) {
       if (!(e instanceof SshError && e.connection && sshT.fallbackToFtp && server.protocol !== 'ssh')) throw e;
@@ -1526,7 +1560,7 @@ export async function uploadFilesTo(
       await c.end().catch(() => undefined);
     }
   } else {
-    const c = new ftp.Client(30_000);
+    const c = new ftp.Client(FTP_TIMEOUT_MS);
     c.ftp.verbose = false;
     const onAbort = () => c.close();
     signal?.addEventListener('abort', onAbort);
@@ -1553,6 +1587,7 @@ export async function uploadFilesTo(
     }
   }
 
-  emit({ status: 'done', filesDone: done, filesTotal: total, percent: 100, message: `Uploaded ${done} file${done === 1 ? '' : 's'}` });
+  const summary = formatUploadSummary({ files: done, bytes: doneBytes, seconds: (Date.now() - startedAt) / 1000 });
+  emit({ status: 'done', filesDone: done, filesTotal: total, bytes: doneBytes, percent: 100, message: summary, summary });
   return done;
 }

@@ -10,6 +10,7 @@ import {
 import { TerminalManager } from './terminalManager';
 import { CommandDefinition } from './types';
 import { playSoundNative, openAppNative } from './platformHelpers';
+import { formatDurationRu } from './uploadRunner';
 
 export type CombinedProgressCallback = (p: CombinedOpProgress) => void;
 
@@ -18,7 +19,7 @@ export interface CombinedRunnerDeps {
   getCommandByName: (name: string) => Promise<CommandDefinition | undefined>;
   /** Run an upload by key. Resolves when finished (success or error).
    *  Throws on error so the runner can react to `stopOnError`. */
-  runUploadByKey: (uploadKey: string, fileFilter?: Set<string>) => Promise<void>;
+  runUploadByKey: (uploadKey: string, fileFilter?: Set<string>) => Promise<string | void>;
   /** Returns the set-cover for a server display ("user@host") —
    *  array of (uploadKey, staleFiles). Empty array = nothing to upload. */
   resolveAutoUploadForServer: (server: string) => Promise<Array<{ uploadKey: string; staleFiles: Set<string> }>>;
@@ -62,6 +63,8 @@ export class CombinedOpRunner {
     };
 
     const stopOnError = op.stopOnError !== false;
+    const startedAt = Date.now();
+    const stepSummaries: string[] = [];
 
     try {
       for (let i = 0; i < op.steps.length; i++) {
@@ -79,7 +82,7 @@ export class CombinedOpRunner {
         emit({ status: 'running', step: i + 1, currentLabel: label, currentUploadKey: this._stepUploadKey(step) });
 
         try {
-          await this._runStep(step, ctrl.signal, (msg) => emit({
+          await this._runStep(step, ctrl.signal, (sum) => stepSummaries.push(`${label}: ${sum}`), (msg) => emit({
             status: 'running', step: i + 1, currentLabel: label, message: msg,
             currentUploadKey: this._stepUploadKey(step),
           }));
@@ -97,7 +100,8 @@ export class CombinedOpRunner {
           }
         }
       }
-      emit({ status: 'done', step: total, currentLabel: 'done', finishedAt: Date.now() });
+      const summary = [...stepSummaries, `всего: ${formatDurationRu((Date.now() - startedAt) / 1000)}`].join('\n');
+      emit({ status: 'done', step: total, currentLabel: 'done', message: summary, summary, finishedAt: Date.now() });
     } finally {
       this._active.delete(op.name);
     }
@@ -111,13 +115,17 @@ export class CombinedOpRunner {
   private async _runStep(
     step: CombinedStep,
     signal: AbortSignal,
+    addSummary: (s: string) => void,
     progress: (msg: string) => void,
   ): Promise<void> {
     switch (step.type) {
       case 'command':
         return this._runCommandStep(step.name, step.wait !== false, signal);
-      case 'upload':
-        return this._deps.runUploadByKey(step.uploadKey);
+      case 'upload': {
+        const sum = await this._deps.runUploadByKey(step.uploadKey);
+        if (sum) addSummary(sum);
+        return;
+      }
       case 'auto-upload': {
         const plan = await this._deps.resolveAutoUploadForServer(step.server);
         if (!plan.length) {
@@ -126,7 +134,8 @@ export class CombinedOpRunner {
         }
         for (const item of plan) {
           if (signal.aborted) throw new Error('cancelled');
-          await this._deps.runUploadByKey(item.uploadKey, item.staleFiles);
+          const sum = await this._deps.runUploadByKey(item.uploadKey, item.staleFiles);
+          if (sum) addSummary(`${item.uploadKey}: ${sum}`);
         }
         return;
       }

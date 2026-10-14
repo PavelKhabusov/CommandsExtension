@@ -154,6 +154,8 @@ export interface RsyncProgress {
 export interface RsyncResult {
   filesTransferred: number;
   bytes: number;
+  sentBytes: number;
+  seconds: number;
 }
 
 const UNITS: Record<string, number> = { B: 1, kB: 1024, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
@@ -167,11 +169,12 @@ export async function rsyncPush(
   t: SshTarget,
   files: RsyncFile[],
   remoteDir: string,
-  opts: { ignoreExisting?: boolean },
+  opts: { ignoreExisting?: boolean; dryRun?: boolean },
   onProgress: (p: RsyncProgress) => void,
   signal?: AbortSignal
 ): Promise<RsyncResult> {
-  if (files.length === 0) return { filesTransferred: 0, bytes: 0 };
+  if (files.length === 0) return { filesTransferred: 0, bytes: 0, sentBytes: 0, seconds: 0 };
+  const startedAt = Date.now();
   const dest = sshPath(t, remoteDir) + '/';
   const stage = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ce-rsync-'));
   try {
@@ -191,12 +194,14 @@ export async function rsyncPush(
 
     const args = [
       '-rtzL',
-      '--mkpath',
+      `--rsync-path=mkdir -p ${sq(dest)} && rsync`,
       '--no-implied-dirs',
       '--from0',
       `--files-from=${listFile}`,
       '--info=progress2',
+      '--stats',
       '--out-format=%n',
+      ...(opts.dryRun ? ['--dry-run'] : []),
       '--exclude=.ce-files',
       ...(opts.ignoreExisting ? ['--ignore-existing'] : []),
       '-e', ['ssh', ...sshOptions(t)].map((a) => (/[\s'"]/.test(a) ? sq(a) : a)).join(' '),
@@ -208,7 +213,18 @@ export async function rsyncPush(
     let bytes = 0;
     let pending = '';
     let current: string | undefined;
+    let inStats = false;
+    const stats: { files?: number; size?: number; sent?: number } = {};
+    const num = (v: string) => Number(v.replace(/[,.\s]/g, ''));
     const handleLine = (line: string) => {
+      if (/^Number of files:/.test(line)) inStats = true;
+      if (inStats) {
+        let sm: RegExpMatchArray | null;
+        if ((sm = line.match(/^Number of regular files transferred:\s*([\d,.]+)/))) stats.files = num(sm[1]);
+        else if ((sm = line.match(/^Total transferred file size:\s*([\d,.]+)/))) stats.size = num(sm[1]);
+        else if ((sm = line.match(/^Total bytes sent:\s*([\d,.]+)/))) stats.sent = num(sm[1]);
+        return;
+      }
       const m = line.match(PROGRESS_RE);
       if (m) {
         bytes = Number(m[1].replace(/[,.]/g, ''));
@@ -240,7 +256,12 @@ export async function rsyncPush(
     if (r.code !== 0) {
       throw explain(t, cleanErr(r.err) || `rsync exited with code ${r.code}`, r.code === 255 || r.code === 12 ? 255 : r.code);
     }
-    return { filesTransferred: filesDone, bytes };
+    return {
+      filesTransferred: stats.files ?? filesDone,
+      bytes: stats.size ?? bytes,
+      sentBytes: stats.sent ?? bytes,
+      seconds: (Date.now() - startedAt) / 1000,
+    };
   } finally {
     await fs.promises.rm(stage, { recursive: true, force: true }).catch(() => undefined);
   }
