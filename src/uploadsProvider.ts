@@ -61,6 +61,9 @@ export function resolveServer(
     protectRemote: upload.protectRemote,
     skipUnchanged: upload.skipUnchanged,
     skipSameHash: upload.skipSameHash,
+    mirrorScan: upload.mirrorScan,
+    mirrorScanIgnore: upload.mirrorScanIgnore,
+    mirrorTrustHashes: upload.mirrorTrustHashes,
     connections: upload.connections,
     ssh: sshTargetOf({ ...base, protocol, host, user, port: upload.port ?? base.port }) ?? undefined,
   };
@@ -102,6 +105,9 @@ export async function loadUploads(workspaceRoot: string, configFileName: string)
     protectRemote: u.protectRemote,
     skipUnchanged: u.skipUnchanged,
     skipSameHash: u.skipSameHash,
+    mirrorScan: u.mirrorScan,
+    mirrorScanIgnore: u.mirrorScanIgnore,
+    mirrorTrustHashes: u.mirrorTrustHashes,
     connections: u.connections,
   }));
 

@@ -7,7 +7,7 @@ Define per-project FTP / FTPS / SFTP / SSH (rsync) upload targets in `server-upl
 - **Files, folders, globs** — single files, recursive folder uploads, or glob patterns
 - **Per-upload `exclude`** — skip files inside an uploaded folder (e.g. `**/node_modules/**`)
 - **Parallel transfers** — `"connections": N` opens a pool of FTP/SFTP connections (default 4 / sftp 2); directory creation is cached per deploy
-- **Mirror deploys** — `"mode": "mirror"` deletes remote files that no longer exist locally (full uploads only); `protectRemote` globs and `.htaccess` are never touched
+- **Mirror deploys** — `"mode": "mirror"` deletes remote files that no longer exist locally (full uploads only); `protectRemote` globs and `.htaccess` are never touched; the server scan skips protected subtrees and lists only dirs we deploy to (`mirrorScan`)
 - **`skipUnchanged` globs** — matching files whose remote size equals the local size are skipped (content-hashed builds re-deploy only new chunks)
 - **Modified tracking** — cards show `⚠ N files modified` since the last upload; a per-server "Upload only N modified" action sends just those, and a header ✓ button marks everything synced
 - **Shared `servers`** — define a server once, reference it from many uploads
@@ -97,7 +97,7 @@ no password in the config. Requirements: `rsync` ≥ 3.2.3 locally (or set
 | `fallbackToFtp` | `false` | When SSH cannot connect, upload over FTP/SFTP instead of failing (otherwise the error explains how to fix SSH) |
 
 Everything else works the same: `items` / `exclude` (resolved locally, one rsync run per
-upload), `mode: "mirror"` + `protectRemote` (one `find` scan and a batched `rm` over SSH),
+upload), `mode: "mirror"` + `protectRemote` (one `find` scan that prunes protected `dir/**` subtrees, and a batched `rm` over SSH),
 `onExists: "skip"` (`--ignore-existing`), `skipSameHash` (same manifest in
 `.vscode/upload-hashes/` as FTP, so switching protocols does not re-upload). rsync itself
 skips files whose size and mtime match and sends only changed blocks of the rest, so
@@ -122,6 +122,36 @@ File permissions are left to the server defaults, as with FTP.
 | `protectRemote` | string[] | no | Globs (relative to `remoteDir`) the mirror must never delete; `.htaccess` is always protected |
 | `connections` | number 1–8 | no | Parallel connection pool (default 4 for ftp/ftps, 2 for sftp) |
 | `skipUnchanged` | string[] | no | Globs whose files are skipped when remote size equals local size |
+| `mirrorScan` | `"smart"` \| `"full"` | no | How the mirror scans the server (default `"smart"`, see below) |
+| `mirrorScanIgnore` | string[] | no | Extra globs (`"dir/**"` or a dir path) the mirror never lists and never deletes |
+| `mirrorTrustHashes` | string[] | no | Globs (`"dir/**"`) whose dirs are not listed; stale files there are taken from the previous upload manifest (default = `skipUnchanged`, `[]` turns it off) |
+
+### Mirror scan (FTP / SFTP)
+
+Before deleting, the mirror lists the server. Every listing is one round trip, so the
+scan is limited to what matters (`"mirrorScan": "smart"`, default):
+
+- **Protected subtrees are never entered** — a dir covered by a `protectRemote` glob
+  ending in `/**` (`docs/**`, `_next/data/docs/**`) or by `mirrorScanIgnore` is skipped
+  without a `LIST`.
+- **Only our dirs are listed** — `remoteDir` itself, dirs present in the local set and
+  dirs from the previous upload (`.vscode/upload-hashes/<upload>.mirror.json`, plus the
+  `skipSameHash` manifest). A foreign dir found there (not ours, never uploaded) is
+  removed as a whole without listing it first — unless a `protectRemote` glob could
+  match inside it, then it is listed like ours.
+- **Trusted dirs are not listed at all** — under `mirrorTrustHashes` (default:
+  `skipUnchanged`, e.g. `_next/static/**`) stale files are those from the previous
+  manifest that are gone locally; files uploaded there count as unchanged by the
+  `skipSameHash` sha1. Needs both manifests from a previous successful mirror; until
+  then the dirs are listed normally. Files put there by hand are not seen and stay —
+  use `[]` (or `"mirrorScan": "full"`) for such dirs.
+- Dirs are listed in parallel over the `connections` pool, each dir once per run.
+  Progress shows `Scanning server: N dirs / M files`, the final status adds
+  `skipped protected: K dirs, trusted: …, foreign: …`.
+
+`"mirrorScan": "full"` lists the whole tree (protected / ignored subtrees still skipped).
+Over SSH the scan is a single `find` anyway; protected `dir/**` paths are pruned
+(`-prune`) so it does not descend into them.
 
 Folder items follow rsync trailing-slash semantics: `"folder/"` uploads the folder's *contents* into `remoteDir`, `"folder"` keeps the folder name on the server.
 

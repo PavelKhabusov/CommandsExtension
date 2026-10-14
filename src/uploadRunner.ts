@@ -134,7 +134,8 @@ function filterUnchanged(
   items: ResolvedItem[],
   remote: RemoteEntry[] | null,
   skipGlobs: RegExp[],
-  sameHash: Set<string> = new Set()
+  sameHash: Set<string> = new Set(),
+  unlisted: (rel: string) => boolean = () => false
 ): { toUpload: ResolvedItem[]; skipped: number } {
   if (skipGlobs.length === 0 && sameHash.size === 0) return { toUpload: items, skipped: 0 };
   const remoteSizes = new Map<string, number>();
@@ -143,6 +144,11 @@ function filterUnchanged(
   let skipped = 0;
   for (const it of items) {
     const rel = normalizeRel(it.relativeFromBase);
+    if (unlisted(rel)) {
+      if (sameHash.has(rel)) skipped += 1;
+      else toUpload.push(it);
+      continue;
+    }
     const size = safeSize(it.absolutePath);
     const sizeSame = remoteSizes.get(rel) === size;
     if ((remote && matchesAny(rel, skipGlobs) && sizeSame) || (sameHash.has(rel) && (!remote || sizeSame))) {
@@ -165,6 +171,175 @@ function sha1File(p: string): string | null {
 
 function readHashManifest(file: string): Record<string, string> {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+}
+
+function mirrorManifestPath(workspaceRoot: string, key: string): string {
+  return path.join(workspaceRoot, '.vscode', 'upload-hashes', key.replace(/[^\w.-]+/g, '_') + '.mirror.json');
+}
+
+function readMirrorManifest(file: string): string[] | null {
+  try {
+    const v = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function ancestorsOf(rel: string, into: Set<string>): void {
+  for (let i = rel.lastIndexOf('/'); i > 0; i = rel.lastIndexOf('/', i - 1)) into.add(rel.substring(0, i));
+}
+
+function subtreeMatchers(globs: string[], exact: boolean): RegExp[] {
+  const out: RegExp[] = [];
+  for (const g of globs) {
+    const n = normalizeRel(g).replace(/\/+$/, '');
+    if (n.endsWith('/**')) out.push(globToRegExp(n.slice(0, -3)));
+    else if (exact && n) out.push(globToRegExp(n));
+  }
+  return out;
+}
+
+function coveredBy(dir: string, matchers: RegExp[]): boolean {
+  if (matchers.length === 0) return false;
+  for (let d = dir; d; d = d.includes('/') ? d.substring(0, d.lastIndexOf('/')) : '') {
+    if (matchesAny(d, matchers)) return true;
+  }
+  return false;
+}
+
+function literalPrefix(glob: string): { prefix: string; wild: boolean } {
+  const n = normalizeRel(glob);
+  const i = n.search(/[*?[]/);
+  return i < 0 ? { prefix: n, wild: false } : { prefix: n.substring(0, i), wild: true };
+}
+
+interface MirrorPlan {
+  smart: boolean;
+  local: Set<string>;
+  prev: Set<string>;
+  knownDirs: Set<string>;
+  skipDirs: RegExp[];
+  trustDirs: RegExp[];
+  protectGlobs: string[];
+}
+
+interface ScanResult {
+  entries: RemoteEntry[];
+  foreignDirs: string[];
+  trustedDirs: string[];
+  skippedDirs: string[];
+  dirsListed: number;
+}
+
+type DirLister = (relDir: string) => Promise<{ name: string; isDir: boolean; isFile: boolean; size: number }[]>;
+
+function buildMirrorPlan(upload: ResolvedUpload, items: ResolvedItem[], prev: string[] | null, hasHashes: boolean): MirrorPlan {
+  const local = new Set(items.map((it) => normalizeRel(it.relativeFromBase)));
+  const prevSet = new Set(prev ?? []);
+  const knownDirs = new Set<string>();
+  for (const r of local) ancestorsOf(r, knownDirs);
+  for (const r of prevSet) ancestorsOf(r, knownDirs);
+  const protectGlobs = ['.htaccess', ...(upload.protectRemote ?? [])];
+  const trustGlobs = upload.mirrorTrustHashes ?? upload.skipUnchanged ?? [];
+  return {
+    smart: upload.mirrorScan !== 'full',
+    local,
+    prev: prevSet,
+    knownDirs,
+    skipDirs: [...subtreeMatchers(protectGlobs, false), ...subtreeMatchers(upload.mirrorScanIgnore ?? [], true)],
+    trustDirs: upload.mirrorScan !== 'full' && prev && hasHashes ? subtreeMatchers(trustGlobs, true) : [],
+    protectGlobs,
+  };
+}
+
+function mayHoldProtected(dir: string, globs: string[]): boolean {
+  const d = dir + '/';
+  return globs.some((g) => {
+    const { prefix, wild } = literalPrefix(g);
+    return prefix.startsWith(d) || (wild && d.startsWith(prefix));
+  });
+}
+
+async function scanMirror(
+  listers: DirLister[],
+  plan: MirrorPlan,
+  signal: AbortSignal,
+  onProgress: (dirs: number, files: number) => void
+): Promise<ScanResult> {
+  const res: ScanResult = { entries: [], foreignDirs: [], trustedDirs: [], skippedDirs: [], dirsListed: 0 };
+  const listed = new Set<string>(['']);
+  const queue: string[] = [''];
+  let active = 0;
+  let files = 0;
+  let lastReport = 0;
+
+  const classify = (rel: string) => {
+    if (coveredBy(rel, plan.skipDirs)) {
+      res.skippedDirs.push(rel);
+      return;
+    }
+    if (coveredBy(rel, plan.trustDirs)) {
+      res.trustedDirs.push(rel);
+      return;
+    }
+    if (plan.smart && !plan.knownDirs.has(rel) && !mayHoldProtected(rel, plan.protectGlobs)) {
+      res.foreignDirs.push(rel);
+      return;
+    }
+    res.entries.push({ rel, isDir: true, size: 0 });
+    if (!listed.has(rel)) {
+      listed.add(rel);
+      queue.push(rel);
+    }
+  };
+
+  const worker = async (list: DirLister): Promise<void> => {
+    for (;;) {
+      if (signal.aborted) throw new Error('Cancelled');
+      const relDir = queue.shift();
+      if (relDir === undefined) {
+        if (active === 0) return;
+        await new Promise((r) => setTimeout(r, 15));
+        continue;
+      }
+      active += 1;
+      try {
+        const entries = await list(relDir);
+        res.dirsListed += 1;
+        for (const fi of entries) {
+          if (fi.name === '.' || fi.name === '..') continue;
+          const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
+          if (fi.isDir) classify(rel);
+          else if (fi.isFile) {
+            res.entries.push({ rel, isDir: false, size: fi.size });
+            files += 1;
+          }
+        }
+        const now = Date.now();
+        if (now - lastReport > 300) {
+          lastReport = now;
+          onProgress(res.dirsListed, files);
+        }
+      } catch {
+        /* недоступная или отсутствующая папка */
+      } finally {
+        active -= 1;
+      }
+    }
+  };
+
+  await Promise.all(listers.map((l) => worker(l)));
+  onProgress(res.dirsListed, files);
+  return res;
+}
+
+function scanSummary(s: ScanResult): string {
+  const parts = [`${s.dirsListed} dirs listed`];
+  if (s.skippedDirs.length) parts.push(`skipped protected: ${s.skippedDirs.length} dirs`);
+  if (s.trustedDirs.length) parts.push(`trusted: ${s.trustedDirs.length} dirs`);
+  if (s.foreignDirs.length) parts.push(`foreign: ${s.foreignDirs.length} dirs`);
+  return parts.join(', ');
 }
 
 export class UploadRunner {
@@ -254,11 +429,18 @@ export class UploadRunner {
         nextHashes[rel] = h;
         if (prevHashes[rel] === h) sameHash.add(rel);
       }
+      const mirrorFile = mirrorManifestPath(workspaceRoot, key);
+      let plan: MirrorPlan | null = null;
+      if (mirror) {
+        const prevList = readMirrorManifest(mirrorFile);
+        const prev = prevList || Object.keys(prevHashes).length ? [...(prevList ?? []), ...Object.keys(prevHashes)] : null;
+        plan = buildMirrorPlan(upload, items, prev, Object.keys(prevHashes).length > 0);
+      }
 
       let viaSsh = false;
       if (upload.ssh) {
         try {
-          await this._runRsync(upload, items, emit, ctrl.signal, mirror, sameHash);
+          await this._runRsync(upload, items, emit, ctrl.signal, plan, sameHash);
           viaSsh = true;
         } catch (e) {
           if (!(e instanceof SshError && e.connection && upload.ssh.fallbackToFtp && upload.protocol !== 'ssh')) throw e;
@@ -272,14 +454,18 @@ export class UploadRunner {
           return;
         }
         if (upload.protocol === 'sftp') {
-          await this._runSftp(upload, password, items, emit, ctrl.signal, mirror, sameHash);
+          await this._runSftp(upload, password, items, emit, ctrl.signal, plan, sameHash);
         } else {
-          await this._runFtp(upload, password, items, emit, ctrl.signal, mirror, sameHash);
+          await this._runFtp(upload, password, items, emit, ctrl.signal, plan, sameHash);
         }
       }
       if (hashGlobs.length && !ctrl.signal.aborted && this._lastStatus.get(key)?.status === 'done') {
         fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
         fs.writeFileSync(manifestFile, JSON.stringify(nextHashes));
+      }
+      if (plan && !ctrl.signal.aborted && this._lastStatus.get(key)?.status === 'done') {
+        fs.mkdirSync(path.dirname(mirrorFile), { recursive: true });
+        fs.writeFileSync(mirrorFile, JSON.stringify(Array.from(plan.local)));
       }
       this._onFilesUploaded?.(
         key,
@@ -312,9 +498,10 @@ export class UploadRunner {
     items: ResolvedItem[],
     emit: (p: Partial<UploadProgress> & { status: UploadStatus }) => void,
     signal: AbortSignal,
-    mirror: boolean,
+    plan: MirrorPlan | null,
     sameHash: Set<string>
   ): Promise<void> {
+    const mirror = !!plan;
     const t = upload.ssh!;
     const base = upload.remoteDir;
     emit({ status: 'connecting', message: `Waiting for a free SSH slot on ${t.host}…` });
@@ -354,13 +541,15 @@ export class UploadRunner {
       let deleted = 0;
       if (mirror && !signal.aborted) {
         emit({ status: 'running', message: 'Mirror: scanning server…', percent: 100 });
-        const remote = await sshScanTree(t, base, signal);
-        const local = new Set(items.map((it) => normalizeRel(it.relativeFromBase)));
+        const prune = [...(upload.protectRemote ?? []), ...(upload.mirrorScanIgnore ?? [])]
+          .map((g) => normalizeRel(g).replace(/\/+$/, ''))
+          .map((g) => (g.endsWith('/**') ? g.slice(0, -3) : (upload.mirrorScanIgnore ?? []).includes(g) ? g : ''))
+          .filter((g) => g && !/[*?[]/.test(g));
+        const remote = (await sshScanTree(t, base, signal, prune)).filter((e) => !coveredBy(e.isDir ? e.rel : posixDirname(e.rel).replace(/^\/$/, ''), plan!.skipDirs));
+        const local = plan!.local;
         const protect = buildProtectMatchers(upload.protectRemote);
         const keepDirs = new Set<string>();
-        for (const rel of local) {
-          for (let i = rel.lastIndexOf('/'); i > 0; i = rel.lastIndexOf('/', i - 1)) keepDirs.add(rel.substring(0, i));
-        }
+        for (const rel of local) ancestorsOf(rel, keepDirs);
         const files = remote.filter((e) => !e.isDir && !local.has(e.rel) && !matchesAny(e.rel, protect)).map((e) => e.rel);
         const dirs = remote
           .filter((e) => e.isDir && !keepDirs.has(e.rel) && !matchesAny(e.rel, protect))
@@ -399,9 +588,10 @@ export class UploadRunner {
     items: ResolvedItem[],
     emit: (p: Partial<UploadProgress> & { status: UploadStatus }) => void,
     signal: AbortSignal,
-    mirror = false,
+    plan: MirrorPlan | null = null,
     sameHash: Set<string> = new Set()
   ): Promise<void> {
+    const mirror = !!plan;
     const connections = clampConnections(upload.connections, 4);
     const skipGlobs = (upload.skipUnchanged ?? []).map(globToRegExp);
     const base = upload.remoteDir.replace(/\/+$/, '');
@@ -430,10 +620,11 @@ export class UploadRunner {
       // Пул открываем ДО скана — обход дерева тоже параллелится по соединениям,
       // иначе тысячи LIST-запросов идут в одно соединение и упираются в latency.
       let preScan: RemoteEntry[] | null = null;
+      let scan: ScanResult | null = null;
       if (mirror || skipGlobs.length > 0) {
         emit({ status: 'running', message: 'Scanning server…' });
 
-        const scanPool = Math.min(connections, Math.max(1, items.length));
+        const scanPool = mirror ? connections : Math.min(connections, Math.max(1, items.length));
         await Promise.all(
           Array.from({ length: Math.max(0, scanPool - clients.length) }, async () => {
             if (signal.aborted) return;
@@ -441,12 +632,15 @@ export class UploadRunner {
           })
         );
 
-        if (mirror) {
-          // Полное зеркало: нужно знать всё, что лежит на сервере, — иначе
-          // не понять, что удалять
-          preScan = await this._scanFtp(clients, base, signal, (n) =>
-            emit({ status: 'running', message: `Scanning server… ${n} files` })
+        if (plan) {
+          scan = await scanMirror(
+            clients.map((c) => async (rel: string) => (await c.list(rel ? `${base}/${rel}` : base)).map((fi) => ({ name: fi.name, isDir: fi.isDirectory, isFile: fi.isFile, size: fi.size }))),
+            plan,
+            signal,
+            (d, n) => emit({ status: 'running', message: `Scanning server: ${d} dirs / ${n} files` })
           );
+          preScan = scan.entries;
+          emit({ status: 'running', message: `Scanned server: ${scanSummary(scan)}` });
         } else {
           // Только skipUnchanged: размеры нужны лишь для заливаемых файлов.
           // Обходим не всё дерево, а только директории, где они лежат.
@@ -456,7 +650,9 @@ export class UploadRunner {
         }
       }
 
-      const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs, sameHash);
+      const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs, sameHash, (rel) =>
+        !!plan && rel.includes('/') && coveredBy(rel.substring(0, rel.lastIndexOf('/')), plan.trustDirs)
+      );
 
       // Соединения уже открыты под скан; добираем, если их не хватает
       const poolSize = Math.min(connections, Math.max(1, toUpload.length));
@@ -553,15 +749,16 @@ export class UploadRunner {
       const transferredTotal = clientBytes.reduce((a, b) => a + b, 0);
 
       let deleted = 0;
-      if (mirror && preScan && !signal.aborted) {
+      if (plan && scan && !signal.aborted) {
         emit({ status: 'running', message: 'Mirror: removing stale files…', percent: 100 });
         deleted = await this._mirrorDelete(
-          preScan,
-          items,
+          scan,
+          plan,
           upload,
           signal,
           (rel) => clients[0].remove(`${base}/${rel}`),
           (rel) => clients[0].removeEmptyDir(`${base}/${rel}`).then(() => undefined),
+          (rel) => clients[0].removeDir(`${base}/${rel}`).then(() => clients[0].cd('/')).then(() => undefined),
           emit
         );
       }
@@ -572,7 +769,8 @@ export class UploadRunner {
         message:
           `Uploaded ${filesDone} file(s), ${formatBytes(transferredTotal)} in ${elapsed.toFixed(1)}s` +
           (skipped > 0 ? `, skipped ${skipped} unchanged` : '') +
-          (mirror ? `, mirror: removed ${deleted} stale` : ''),
+          (mirror ? `, mirror: removed ${deleted} stale` : '') +
+          (scan ? ` (${scanSummary(scan)})` : ''),
         bytes: transferredTotal,
         bytesTotal: totalBytes,
         filesDone,
@@ -630,71 +828,6 @@ export class UploadRunner {
     return entries;
   }
 
-  /**
-   * Обход дерева на сервере. Каждая директория — отдельный round-trip LIST,
-   * поэтому на больших деревьях (тысячи файлов) последовательный обход упирается
-   * в задержку сети. Раскладываем директории по всем соединениям пула: worker'ы
-   * тянут задачи из общей очереди, найденные поддиректории кладут туда же.
-   */
-  private async _scanFtp(
-    clients: ftp.Client[],
-    base: string,
-    signal: AbortSignal,
-    onProgress?: (found: number) => void
-  ): Promise<RemoteEntry[]> {
-    const entries: RemoteEntry[] = [];
-    const queue: string[] = [''];
-    let active = 0;
-    let lastReport = 0;
-
-    const report = () => {
-      const now = Date.now();
-      if (onProgress && now - lastReport > 300) {
-        lastReport = now;
-        onProgress(entries.length);
-      }
-    };
-
-    const worker = async (client: ftp.Client): Promise<void> => {
-      for (;;) {
-        if (signal.aborted) throw new Error('Cancelled');
-        const relDir = queue.shift();
-        if (relDir === undefined) {
-          // Очередь пуста. Если никто больше не работает — новых директорий не
-          // появится, выходим. Иначе ждём: сосед может положить поддиректории.
-          if (active === 0) return;
-          await new Promise((r) => setTimeout(r, 15));
-          continue;
-        }
-
-        // Инкремент ДО await: иначе сосед увидит пустую очередь при active === 0
-        // и выйдет, хотя мы вот-вот добавим в неё поддиректории
-        active += 1;
-        try {
-          const list = await client.list(relDir ? `${base}/${relDir}` : base);
-          for (const fi of list) {
-            if (fi.name === '.' || fi.name === '..') continue;
-            const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
-            if (fi.isDirectory) {
-              entries.push({ rel, isDir: true, size: 0 });
-              queue.push(rel);
-            } else if (fi.isFile) {
-              entries.push({ rel, isDir: false, size: fi.size });
-            }
-          }
-          report();
-        } catch {
-          // Недоступная директория — не повод валить весь скан
-        } finally {
-          active -= 1;
-        }
-      }
-    };
-
-    await Promise.all(clients.map((c) => worker(c)));
-    return entries;
-  }
-
   // ------------------------------------------------------------------ SFTP
 
   private async _runSftp(
@@ -703,9 +836,10 @@ export class UploadRunner {
     items: ResolvedItem[],
     emit: (p: Partial<UploadProgress> & { status: UploadStatus }) => void,
     signal: AbortSignal,
-    mirror = false,
+    plan: MirrorPlan | null = null,
     sameHash: Set<string> = new Set()
   ): Promise<void> {
+    const mirror = !!plan;
     const connections = clampConnections(upload.connections, 2);
     const skipGlobs = (upload.skipUnchanged ?? []).map(globToRegExp);
     const base = upload.remoteDir.replace(/\/+$/, '');
@@ -731,10 +865,11 @@ export class UploadRunner {
 
       // Пул открываем ДО скана — обход дерева тоже параллелится по соединениям
       let preScan: RemoteEntry[] | null = null;
+      let scan: ScanResult | null = null;
       if (mirror || skipGlobs.length > 0) {
         emit({ status: 'running', message: 'Scanning server…' });
 
-        const scanPool = Math.min(connections, Math.max(1, items.length));
+        const scanPool = mirror ? connections : Math.min(connections, Math.max(1, items.length));
         await Promise.all(
           Array.from({ length: Math.max(0, scanPool - clients.length) }, async () => {
             if (signal.aborted) return;
@@ -742,10 +877,15 @@ export class UploadRunner {
           })
         );
 
-        if (mirror) {
-          preScan = await this._scanSftp(clients, base, signal, (n) =>
-            emit({ status: 'running', message: `Scanning server… ${n} files` })
+        if (plan) {
+          scan = await scanMirror(
+            clients.map((c) => async (rel: string) => (await c.list(rel ? `${base}/${rel}` : base)).map((fi) => ({ name: fi.name, isDir: fi.type === 'd', isFile: fi.type === '-', size: fi.size }))),
+            plan,
+            signal,
+            (d, n) => emit({ status: 'running', message: `Scanning server: ${d} dirs / ${n} files` })
           );
+          preScan = scan.entries;
+          emit({ status: 'running', message: `Scanned server: ${scanSummary(scan)}` });
         } else {
           // Только skipUnchanged — хватит директорий заливаемых файлов
           preScan = await this._scanSftpDirs(clients, base, dirsOf(items), signal, (n) =>
@@ -754,7 +894,9 @@ export class UploadRunner {
         }
       }
 
-      const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs, sameHash);
+      const { toUpload, skipped } = filterUnchanged(items, preScan, skipGlobs, sameHash, (rel) =>
+        !!plan && rel.includes('/') && coveredBy(rel.substring(0, rel.lastIndexOf('/')), plan.trustDirs)
+      );
 
       const poolSize = Math.min(connections, Math.max(1, toUpload.length));
       while (clients.length < poolSize) {
@@ -833,15 +975,16 @@ export class UploadRunner {
       const transferredTotal = doneBytes;
 
       let deleted = 0;
-      if (mirror && preScan && !signal.aborted) {
+      if (plan && scan && !signal.aborted) {
         emit({ status: 'running', message: 'Mirror: removing stale files…', percent: 100 });
         deleted = await this._mirrorDelete(
-          preScan,
-          items,
+          scan,
+          plan,
           upload,
           signal,
           (rel) => clients[0].delete(`${base}/${rel}`).then(() => undefined),
           (rel) => clients[0].rmdir(`${base}/${rel}`).then(() => undefined),
+          (rel) => clients[0].rmdir(`${base}/${rel}`, true).then(() => undefined),
           emit
         );
       }
@@ -852,7 +995,8 @@ export class UploadRunner {
         message:
           `Uploaded ${filesDone} file(s), ${formatBytes(transferredTotal)} in ${elapsed.toFixed(1)}s` +
           (skipped > 0 ? `, skipped ${skipped} unchanged` : '') +
-          (mirror ? `, mirror: removed ${deleted} stale` : ''),
+          (mirror ? `, mirror: removed ${deleted} stale` : '') +
+          (scan ? ` (${scanSummary(scan)})` : ''),
         bytes: transferredTotal,
         bytesTotal: totalBytes,
         filesDone,
@@ -912,99 +1056,65 @@ export class UploadRunner {
     return entries;
   }
 
-  /** Параллельный обход дерева по пулу соединений — см. комментарий у _scanFtp. */
-  private async _scanSftp(
-    clients: SftpClient[],
-    base: string,
-    signal: AbortSignal,
-    onProgress?: (found: number) => void
-  ): Promise<RemoteEntry[]> {
-    const entries: RemoteEntry[] = [];
-    const queue: string[] = [''];
-    let active = 0;
-    let lastReport = 0;
-
-    const report = () => {
-      const now = Date.now();
-      if (onProgress && now - lastReport > 300) {
-        lastReport = now;
-        onProgress(entries.length);
-      }
-    };
-
-    const worker = async (sftp: SftpClient): Promise<void> => {
-      for (;;) {
-        if (signal.aborted) throw new Error('Cancelled');
-        const relDir = queue.shift();
-        if (relDir === undefined) {
-          if (active === 0) return;
-          await new Promise((r) => setTimeout(r, 15));
-          continue;
-        }
-
-        active += 1;
-        try {
-          const list = await sftp.list(relDir ? `${base}/${relDir}` : base);
-          for (const fi of list) {
-            if (fi.name === '.' || fi.name === '..') continue;
-            const rel = relDir ? `${relDir}/${fi.name}` : fi.name;
-            if (fi.type === 'd') {
-              entries.push({ rel, isDir: true, size: 0 });
-              queue.push(rel);
-            } else if (fi.type === '-') {
-              entries.push({ rel, isDir: false, size: fi.size });
-            }
-          }
-          report();
-        } catch {
-          // Недоступная директория — не повод валить весь скан
-        } finally {
-          active -= 1;
-        }
-      }
-    };
-
-    await Promise.all(clients.map((c) => worker(c)));
-    return entries;
-  }
-
   // ------------------------------------------------------------- mirror
 
   /** Удаляет с сервера файлы, которых нет в локальном наборе (mode: 'mirror'). */
   private async _mirrorDelete(
-    remote: RemoteEntry[],
-    localItems: ResolvedItem[],
+    scan: ScanResult,
+    plan: MirrorPlan,
     upload: ResolvedUpload,
     signal: AbortSignal,
     removeFile: (rel: string) => Promise<unknown>,
     removeDir: (rel: string) => Promise<unknown>,
+    removeTree: (rel: string) => Promise<unknown>,
     emit: (p: Partial<UploadProgress> & { status: UploadStatus }) => void
   ): Promise<number> {
-    const local = new Set(localItems.map((it) => normalizeRel(it.relativeFromBase)));
     const protect = buildProtectMatchers(upload.protectRemote);
+    const keepDirs = new Set<string>();
+    for (const r of plan.local) ancestorsOf(r, keepDirs);
 
-    let deleted = 0;
-    for (const e of remote) {
-      if (signal.aborted) throw new Error('Cancelled');
-      if (e.isDir || local.has(e.rel) || matchesAny(e.rel, protect)) continue;
-      try {
-        await removeFile(e.rel);
-        deleted += 1;
-        if (deleted % 20 === 0) {
-          emit({ status: 'running', message: `Mirror: removed ${deleted}…`, percent: 100 });
-        }
-      } catch {
-        /* оставляем — не смогли удалить */
+    const files = scan.entries.filter((e) => !e.isDir && !plan.local.has(e.rel) && !matchesAny(e.rel, protect)).map((e) => e.rel);
+    const dirs = new Set(scan.entries.filter((e) => e.isDir).map((e) => e.rel));
+    if (scan.trustedDirs.length) {
+      const trusted = scan.trustedDirs.map((d) => d + '/');
+      for (const r of plan.prev) {
+        if (plan.local.has(r) || matchesAny(r, protect) || !trusted.some((t) => r.startsWith(t))) continue;
+        files.push(r);
+        const ds = new Set<string>();
+        ancestorsOf(r, ds);
+        for (const d of ds) if (trusted.some((t) => (d + '/').startsWith(t) && d + '/' !== t)) dirs.add(d);
       }
     }
 
-    // Пустые папки — от самых глубоких к корню; непустые просто не удалятся
-    const dirs = remote.filter((e) => e.isDir).sort((a, b) => b.rel.length - a.rel.length);
-    for (const d of dirs) {
+    let deleted = 0;
+    const tick = () => {
+      deleted += 1;
+      if (deleted % 20 === 0) emit({ status: 'running', message: `Mirror: removed ${deleted}…`, percent: 100 });
+    };
+    for (const rel of files) {
       if (signal.aborted) throw new Error('Cancelled');
-      if (matchesAny(d.rel, protect)) continue;
       try {
-        await removeDir(d.rel);
+        await removeFile(rel);
+        tick();
+      } catch {
+        /* нет на сервере или не смогли удалить */
+      }
+    }
+    for (const rel of scan.foreignDirs) {
+      if (signal.aborted) throw new Error('Cancelled');
+      try {
+        await removeTree(rel);
+        tick();
+      } catch {
+        /* оставляем */
+      }
+    }
+
+    const order = Array.from(dirs).filter((d) => !keepDirs.has(d) && !matchesAny(d, protect)).sort((a, b) => b.length - a.length);
+    for (const d of order) {
+      if (signal.aborted) throw new Error('Cancelled');
+      try {
+        await removeDir(d);
       } catch {
         /* не пустая */
       }

@@ -107,6 +107,12 @@ export interface UploadDefinition {
    * Use for non-hashed build output (html, txt) that rebuilds byte-identical.
    */
   skipSameHash?: string[];
+  /** Mirror server scan: 'smart' (default) lists only dirs we deploy to, 'full' walks the whole tree. */
+  mirrorScan?: 'smart' | 'full';
+  /** Extra globs ('dir/**') whose subtrees the mirror scan never lists or deletes. */
+  mirrorScanIgnore?: string[];
+  /** Globs whose dirs are not listed; stale files come from the previous manifest. Default = skipUnchanged. */
+  mirrorTrustHashes?: string[];
   /** Parallel connections for the transfer (1–8, default 4 for ftp/ftps, 2 for sftp). */
   connections?: number;
 }
@@ -127,6 +133,9 @@ export interface ResolvedUpload {
   protectRemote?: string[];
   skipUnchanged?: string[];
   skipSameHash?: string[];
+  mirrorScan?: 'smart' | 'full';
+  mirrorScanIgnore?: string[];
+  mirrorTrustHashes?: string[];
   connections?: number;
   /** Set when this upload goes through rsync over SSH. */
   ssh?: SshTarget;

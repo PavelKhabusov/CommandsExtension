@@ -253,11 +253,12 @@ export interface SshRemoteEntry {
 }
 
 /** Everything under base (files and dirs, relative paths); empty when base is missing. */
-export async function sshScanTree(t: SshTarget, remoteDir: string, signal?: AbortSignal): Promise<SshRemoteEntry[]> {
+export async function sshScanTree(t: SshTarget, remoteDir: string, signal?: AbortSignal, prune: string[] = []): Promise<SshRemoteEntry[]> {
   const base = sshPath(t, remoteDir);
+  const pruneExpr = prune.map((p) => `-path ${sq(base.replace(/\/+$/, '') + '/' + p)} -prune -o `).join('');
   const out = await sshRun(
     t,
-    `[ -d ${sq(base)} ] || exit 0; find ${sq(base)} -mindepth 1 \\( -type f -o -type d \\) -printf '%y %s %P\\0'`,
+    `[ -d ${sq(base)} ] || exit 0; find ${sq(base)} -mindepth 1 ${pruneExpr}\\( -type f -o -type d \\) -printf '%y %s %P\\0'`,
     signal
   );
   const entries: SshRemoteEntry[] = [];
