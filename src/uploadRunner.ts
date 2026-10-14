@@ -7,6 +7,10 @@ import * as ftp from 'basic-ftp';
 import SftpClient from 'ssh2-sftp-client';
 import { ResolvedUpload, UploadProgress, UploadStatus, ServerDefinition } from './uploadsTypes';
 import { resolveItems, ResolvedItem } from './uploadsProvider';
+import {
+  sshTargetOf, SshError, rsyncPush, sshScanTree, sshRemoveUnder, sshDeletePaths,
+  sshListDir, sshMkdir, sshStat, rsyncPull, acquireSshSlot,
+} from './sshTransport';
 
 /**
  * Ask the external hub (commandsExtension.externalApiUrl) to prepare the
@@ -226,20 +230,6 @@ export class UploadRunner {
         return;
       }
 
-      let password = upload.password;
-      if (!password) {
-        password = await vscode.window.showInputBox({
-          title: `Password for ${upload.user}@${upload.host}`,
-          prompt: `${upload.protocol.toUpperCase()} password — not stored, will be asked again`,
-          password: true,
-          ignoreFocusOut: true,
-        });
-        if (!password) {
-          emit({ status: 'cancelled', message: 'Password not provided', finishedAt: Date.now() });
-          return;
-        }
-      }
-
       emit({ status: 'connecting', message: 'Preparing network…' });
       await prepareUpload(key, workspaceRoot);
 
@@ -265,10 +255,27 @@ export class UploadRunner {
         if (prevHashes[rel] === h) sameHash.add(rel);
       }
 
-      if (upload.protocol === 'sftp') {
-        await this._runSftp(upload, password, items, emit, ctrl.signal, mirror, sameHash);
-      } else {
-        await this._runFtp(upload, password, items, emit, ctrl.signal, mirror, sameHash);
+      let viaSsh = false;
+      if (upload.ssh) {
+        try {
+          await this._runRsync(upload, items, emit, ctrl.signal, mirror, sameHash);
+          viaSsh = true;
+        } catch (e) {
+          if (!(e instanceof SshError && e.connection && upload.ssh.fallbackToFtp && upload.protocol !== 'ssh')) throw e;
+          emit({ status: 'connecting', message: `SSH failed, falling back to ${upload.protocol.toUpperCase()}…` });
+        }
+      }
+      if (!viaSsh) {
+        const password = await this._askPassword(upload);
+        if (!password) {
+          emit({ status: 'cancelled', message: 'Password not provided', finishedAt: Date.now() });
+          return;
+        }
+        if (upload.protocol === 'sftp') {
+          await this._runSftp(upload, password, items, emit, ctrl.signal, mirror, sameHash);
+        } else {
+          await this._runFtp(upload, password, items, emit, ctrl.signal, mirror, sameHash);
+        }
       }
       if (hashGlobs.length && !ctrl.signal.aborted && this._lastStatus.get(key)?.status === 'done') {
         fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
@@ -285,6 +292,102 @@ export class UploadRunner {
       emit({ status: 'error', message, finishedAt: Date.now() });
     } finally {
       this._active.delete(key);
+    }
+  }
+
+  private async _askPassword(upload: ResolvedUpload): Promise<string | undefined> {
+    if (upload.password) return upload.password;
+    return vscode.window.showInputBox({
+      title: `Password for ${upload.user}@${upload.host}`,
+      prompt: `${upload.protocol.toUpperCase()} password — not stored, will be asked again`,
+      password: true,
+      ignoreFocusOut: true,
+    });
+  }
+
+  // ---------------------------------------------------------------- rsync
+
+  private async _runRsync(
+    upload: ResolvedUpload,
+    items: ResolvedItem[],
+    emit: (p: Partial<UploadProgress> & { status: UploadStatus }) => void,
+    signal: AbortSignal,
+    mirror: boolean,
+    sameHash: Set<string>
+  ): Promise<void> {
+    const t = upload.ssh!;
+    const base = upload.remoteDir;
+    emit({ status: 'connecting', message: `Waiting for a free SSH slot on ${t.host}…` });
+    const release = await acquireSshSlot(t, signal);
+    try {
+      const toUpload = items.filter((it) => !sameHash.has(normalizeRel(it.relativeFromBase)));
+      const skippedHash = items.length - toUpload.length;
+      const totalBytes = toUpload.reduce((sum, it) => sum + safeSize(it.absolutePath), 0);
+      const filesTotal = toUpload.length;
+      const startedAt = Date.now();
+      emit({ status: 'connecting', message: `rsync → ${t.user}@${t.host}…` });
+
+      let lastEmit = 0;
+      const res = await rsyncPush(
+        t,
+        toUpload.map((it) => ({ localAbs: it.absolutePath, remoteRel: normalizeRel(it.relativeFromBase) })),
+        base,
+        { ignoreExisting: upload.onExists === 'skip' },
+        (p) => {
+          const now = Date.now();
+          if (now - lastEmit < 150) return;
+          lastEmit = now;
+          emit({
+            status: 'running',
+            currentFile: p.currentFile,
+            bytes: p.bytes,
+            bytesTotal: totalBytes,
+            filesDone: p.filesDone,
+            filesTotal,
+            percent: p.percent,
+            speedBps: p.speedBps,
+          });
+        },
+        signal
+      );
+
+      let deleted = 0;
+      if (mirror && !signal.aborted) {
+        emit({ status: 'running', message: 'Mirror: scanning server…', percent: 100 });
+        const remote = await sshScanTree(t, base, signal);
+        const local = new Set(items.map((it) => normalizeRel(it.relativeFromBase)));
+        const protect = buildProtectMatchers(upload.protectRemote);
+        const keepDirs = new Set<string>();
+        for (const rel of local) {
+          for (let i = rel.lastIndexOf('/'); i > 0; i = rel.lastIndexOf('/', i - 1)) keepDirs.add(rel.substring(0, i));
+        }
+        const files = remote.filter((e) => !e.isDir && !local.has(e.rel) && !matchesAny(e.rel, protect)).map((e) => e.rel);
+        const dirs = remote
+          .filter((e) => e.isDir && !keepDirs.has(e.rel) && !matchesAny(e.rel, protect))
+          .map((e) => e.rel)
+          .sort((a, b) => b.length - a.length);
+        emit({ status: 'running', message: `Mirror: removing ${files.length} stale…`, percent: 100 });
+        deleted = await sshRemoveUnder(t, base, files, dirs, signal);
+      }
+
+      const elapsed = Math.max(0.001, (Date.now() - startedAt) / 1000);
+      const unchanged = filesTotal - res.filesTransferred + skippedHash;
+      emit({
+        status: 'done',
+        message:
+          `rsync: uploaded ${res.filesTransferred} file(s), ${formatBytes(res.bytes)} in ${elapsed.toFixed(1)}s` +
+          (unchanged > 0 ? `, skipped ${unchanged} unchanged` : '') +
+          (mirror ? `, mirror: removed ${deleted} stale` : ''),
+        bytes: res.bytes,
+        bytesTotal: totalBytes,
+        filesDone: res.filesTransferred,
+        filesTotal,
+        percent: 100,
+        speedBps: res.bytes / elapsed,
+        finishedAt: Date.now(),
+      });
+    } finally {
+      release();
     }
   }
 
@@ -930,7 +1033,7 @@ export interface RemoteListEntry {
 }
 
 function serverPort(s: ServerDefinition): number {
-  return s.port ?? (s.protocol === 'sftp' ? 22 : 21);
+  return s.port ?? (s.protocol === 'sftp' || s.protocol === 'ssh' ? 22 : 21);
 }
 
 /** Листинг одной удалённой директории (для навигации, как в FileZilla). */
@@ -940,6 +1043,8 @@ export async function listRemoteDir(
 ): Promise<RemoteListEntry[]> {
   const port = serverPort(server);
   const path = dir && dir !== '' ? dir : '/';
+  const sshT = sshTargetOf(server);
+  if (sshT && server.protocol === 'ssh') return sshListDir(sshT, path);
 
   if (server.protocol === 'sftp') {
     const c = new SftpClient();
@@ -981,6 +1086,8 @@ export async function listRemoteDir(
 
 /** Создать директорию на сервере (рекурсивно). */
 export async function remoteMkdir(server: ServerDefinition, dir: string): Promise<void> {
+  const sshT = sshTargetOf(server);
+  if (sshT && server.protocol === 'ssh') return sshMkdir(sshT, dir);
   const port = serverPort(server);
   if (server.protocol === 'sftp') {
     const c = new SftpClient();
@@ -1015,6 +1122,8 @@ export async function statRemoteTarget(
   server: ServerDefinition,
   target: string
 ): Promise<RemoteTargetInfo> {
+  const sshT = sshTargetOf(server);
+  if (sshT) return { path: target, ...(await sshStat(sshT, target)) };
   const parent = posixDirname(target) || '/';
   const base = target.replace(/\/+$/, '').split('/').pop() || '';
   let entries: RemoteListEntry[];
@@ -1052,6 +1161,11 @@ export async function deleteRemotePaths(
 ): Promise<number> {
   const port = serverPort(server);
   let removed = 0;
+  const sshT = sshTargetOf(server);
+  if (sshT) {
+    onProgress?.({ uploadKey: '__quick_delete__', status: 'running', message: `Deleting ${targets.length} path(s) over SSH…` });
+    return sshDeletePaths(sshT, targets, signal);
+  }
 
   const emit = (message: string) => {
     onProgress?.({ uploadKey: '__quick_delete__', status: 'running', message });
@@ -1132,6 +1246,15 @@ export async function downloadRemotePaths(
   };
 
   const baseName = (p: string) => p.replace(/\/+$/, '').split('/').pop() || '';
+
+  const sshT = sshTargetOf(server);
+  if (sshT) {
+    for (const t of targets) {
+      emit(`Downloading ${baseName(t.remotePath)}…`);
+      done += await rsyncPull(sshT, t.remotePath, t.localDir, signal);
+    }
+    return done;
+  }
 
   if (server.protocol === 'sftp') {
     const c = new SftpClient();
@@ -1243,6 +1366,30 @@ export async function uploadFilesTo(
   };
 
   emit({ status: 'connecting', message: `Connecting to ${server.host}…` });
+
+  const sshT = sshTargetOf(server);
+  if (sshT) {
+    let viaSsh = false;
+    const release = await acquireSshSlot(sshT, signal);
+    try {
+      const res = await rsyncPush(
+        sshT,
+        files.map((f) => ({ localAbs: f.localAbs, remoteRel: f.remoteRel })),
+        remoteDir,
+        {},
+        (p) => emit({ status: 'running', currentFile: p.currentFile, filesDone: p.filesDone, bytes: p.bytes, percent: p.percent, speedBps: p.speedBps }),
+        signal
+      );
+      done = total;
+      emit({ status: 'done', filesDone: done, filesTotal: total, bytes: res.bytes, percent: 100, message: `rsync: ${res.filesTransferred} changed of ${total} file(s)` });
+      viaSsh = true;
+    } catch (e) {
+      if (!(e instanceof SshError && e.connection && sshT.fallbackToFtp && server.protocol !== 'ssh')) throw e;
+    } finally {
+      release();
+    }
+    if (viaSsh) return done;
+  }
 
   if (server.protocol === 'sftp') {
     const c = new SftpClient();

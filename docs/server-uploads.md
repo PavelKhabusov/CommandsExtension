@@ -1,6 +1,6 @@
 # Server Uploads
 
-Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.json` and run them with one click — no FileZilla CLI required, works on Linux, macOS, and Windows.
+Define per-project FTP / FTPS / SFTP / SSH (rsync) upload targets in `server-uploads.local.json` and run them with one click — no FileZilla CLI required, works on Linux, macOS, and Windows.
 
 - **Live progress** — percentage, current file, transfer speed, files done / total
 - **Cancel mid-flight** — stop button on running uploads
@@ -50,11 +50,61 @@ Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.jso
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
 | `name` | string | yes | Reference name used by uploads |
-| `protocol` | `"ftp"` \| `"ftps"` \| `"sftp"` | yes | Connection protocol |
+| `protocol` | `"ftp"` \| `"ftps"` \| `"sftp"` \| `"ssh"` | yes | Connection protocol (`ssh` = rsync over SSH by key) |
 | `host` | string | yes | Server hostname or IP |
 | `port` | number | no | Defaults: 21 (FTP/FTPS), 22 (SFTP) |
 | `user` | string | yes | Username |
 | `password` | string | no | Password. If omitted, you'll be prompted at upload time (not saved) |
+| `uploadVia` | `"ssh"` | no | Upload this FTP/SFTP server's uploads through rsync over SSH (see below) |
+| `ssh` | object | no | SSH settings for rsync uploads: `host`, `user`, `port`, `root`, `maxParallel`, `fallbackToFtp` |
+
+## SSH / rsync uploads
+
+FTP sends small files one round-trip at a time (~0.16 MB/s on a far shared host).
+With `"protocol": "ssh"` — or `"uploadVia": "ssh"` on an existing FTP server — uploads
+run through the system `rsync` over SSH with **your own key** (ssh-agent / `~/.ssh`),
+no password in the config. Requirements: `rsync` ≥ 3.2.3 locally (or set
+`commandsExtension.rsyncPath`) and on the server; key login works (`ssh user@host`).
+
+```json
+{
+  "servers": [
+    {
+      "name": "dev",
+      "protocol": "ftp",
+      "host": "example.beget.tech",
+      "user": "example_dev",
+      "password": "ftp-password",
+      "uploadVia": "ssh",
+      "ssh": { "maxParallel": 3, "fallbackToFtp": false }
+    },
+    {
+      "name": "vps",
+      "protocol": "ssh",
+      "host": "vps.example.com",
+      "user": "deploy",
+      "ssh": { "root": "/var/www/site" }
+    }
+  ]
+}
+```
+
+| `ssh` field | Default | Description |
+|-------------|---------|-------------|
+| `host` / `user` / `port` | `sql.sshHost` / `sql.sshUser` / `sql.sshPort`, then the server's `host` / `user`, port 22 | SSH login |
+| `root` | `"~"` for `uploadVia`, `"/"` for `protocol: "ssh"` | Where `remoteDir` and spec paths start. `"~"` = SSH home (on shared hosting it is usually the FTP root, so FTP paths keep working as is) |
+| `maxParallel` | 3 | Uploads to this server running at once; the rest wait for a slot |
+| `fallbackToFtp` | `false` | When SSH cannot connect, upload over FTP/SFTP instead of failing (otherwise the error explains how to fix SSH) |
+
+Everything else works the same: `items` / `exclude` (resolved locally, one rsync run per
+upload), `mode: "mirror"` + `protectRemote` (one `find` scan and a batched `rm` over SSH),
+`onExists: "skip"` (`--ignore-existing`), `skipSameHash` (same manifest in
+`.vscode/upload-hashes/` as FTP, so switching protocols does not re-upload). rsync itself
+skips files whose size and mtime match and sends only changed blocks of the rest, so
+`skipUnchanged` and `connections` are not needed. Quick Upload / specs to such a server go in
+one rsync per server; `del` is `rm -rf` over SSH (missing paths skipped). Progress
+(bytes, %, speed, current file, files) goes to the panel and the hub like FTP; Stop kills rsync.
+File permissions are left to the server defaults, as with FTP.
 
 ## `uploads` entry
 

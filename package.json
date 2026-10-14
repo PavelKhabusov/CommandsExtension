@@ -127,6 +127,11 @@
           "default": "server-uploads.local.json",
           "description": "Path to server uploads configuration file (relative to workspace root). The default name ends with .local.json so it stays out of git when matched by common ignore patterns."
         },
+        "commandsExtension.rsyncPath": {
+          "type": "string",
+          "default": "rsync",
+          "description": "rsync executable used for uploads to servers with \"protocol\": \"ssh\" or \"uploadVia\": \"ssh\"."
+        },
         "commandsExtension.externalApiUrl": {
           "type": "string",
           "default": "",
