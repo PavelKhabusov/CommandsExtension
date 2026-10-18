@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { UploadDefinition, UploadGroup, UploadProtocol, ServerDefinition, ResolvedUpload } from './uploadsTypes';
+import { sshTargetOf } from './sshTransport';
 
 interface UploadsJsonSchema {
   servers?: ServerDefinition[];
@@ -22,7 +23,7 @@ function safeParseJson<T>(raw: string, filePath: string): T | null {
 }
 
 function defaultPort(protocol: UploadProtocol): number {
-  return protocol === 'sftp' ? 22 : 21;
+  return protocol === 'sftp' || protocol === 'ssh' ? 22 : 21;
 }
 
 export function resolveServer(
@@ -59,7 +60,12 @@ export function resolveServer(
     mode: upload.mode,
     protectRemote: upload.protectRemote,
     skipUnchanged: upload.skipUnchanged,
+    skipSameHash: upload.skipSameHash,
+    mirrorScan: upload.mirrorScan,
+    mirrorScanIgnore: upload.mirrorScanIgnore,
+    mirrorTrustHashes: upload.mirrorTrustHashes,
     connections: upload.connections,
+    ssh: sshTargetOf({ ...base, protocol, host, user, port: upload.port ?? base.port }) ?? undefined,
   };
 }
 
@@ -98,6 +104,10 @@ export async function loadUploads(workspaceRoot: string, configFileName: string)
     mode: u.mode,
     protectRemote: u.protectRemote,
     skipUnchanged: u.skipUnchanged,
+    skipSameHash: u.skipSameHash,
+    mirrorScan: u.mirrorScan,
+    mirrorScanIgnore: u.mirrorScanIgnore,
+    mirrorTrustHashes: u.mirrorTrustHashes,
     connections: u.connections,
   }));
 
@@ -121,7 +131,7 @@ function isValidServer(s: unknown): s is ServerDefinition {
     typeof o.name === 'string' &&
     typeof o.host === 'string' &&
     typeof o.user === 'string' &&
-    (o.protocol === 'ftp' || o.protocol === 'ftps' || o.protocol === 'sftp')
+    (o.protocol === 'ftp' || o.protocol === 'ftps' || o.protocol === 'sftp' || o.protocol === 'ssh')
   );
 }
 
@@ -136,7 +146,7 @@ function isValidUpload(u: unknown): u is UploadDefinition {
   const hasInline =
     typeof o.host === 'string' &&
     typeof o.user === 'string' &&
-    (o.protocol === 'ftp' || o.protocol === 'ftps' || o.protocol === 'sftp');
+    (o.protocol === 'ftp' || o.protocol === 'ftps' || o.protocol === 'sftp' || o.protocol === 'ssh');
   return hasServerRef || hasInline;
 }
 

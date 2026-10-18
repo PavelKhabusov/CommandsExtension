@@ -6,7 +6,18 @@
       "host": "example.com",
       "port": 21,
       "user": "username",
-      "password": "your-password"
+      "password": "your-password",
+
+      "//uploadVia": "Optional. 'ssh' sends this server's uploads through rsync over SSH with your key (ssh-agent / ~/.ssh). 'ssh' block: host/user/port (default: sql.ssh*, then host/user, 22), root ('~' = SSH home), maxParallel (3), fallbackToFtp (false).",
+      "uploadVia": "ssh",
+      "ssh": { "maxParallel": 3 }
+    },
+    {
+      "name": "vps",
+      "protocol": "ssh",
+      "host": "vps.example.com",
+      "user": "deploy",
+      "ssh": { "root": "/var/www/site" }
     },
     {
       "name": "staging",

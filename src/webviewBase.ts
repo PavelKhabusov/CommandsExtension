@@ -754,7 +754,7 @@ export async function sendCommandsToWebview(
 			}
 			return {
 				...u,
-				protocol: resolved.protocol,
+				protocol: resolved.ssh ? 'rsync' : resolved.protocol,
 				host: resolved.host,
 				port: resolved.port,
 				user: resolved.user,

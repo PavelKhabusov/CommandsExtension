@@ -1,4 +1,37 @@
-export type UploadProtocol = 'ftp' | 'ftps' | 'sftp';
+export type UploadProtocol = 'ftp' | 'ftps' | 'sftp' | 'ssh';
+
+/**
+ * Uploads over SSH with the system rsync, authenticated by the developer's own
+ * key (ssh-agent / ~/.ssh) — no password in the config. Used when the server's
+ * protocol is "ssh", or when an FTP server sets uploadVia: "ssh".
+ */
+export interface ServerSshConfig {
+  /** SSH host; defaults to sql.sshHost, then the server's `host`. */
+  host?: string;
+  /** SSH user; defaults to sql.sshUser, then the server's `user`. */
+  user?: string;
+  /** SSH port; defaults to sql.sshPort, then 22 (or `port` for protocol "ssh"). */
+  port?: number;
+  /**
+   * Where the config's remote paths (remoteDir, spec paths) start over SSH.
+   * Default for uploadVia "ssh": "~" — the SSH home, which on shared hosting
+   * is usually the FTP root. Default for protocol "ssh": "/" (paths are absolute).
+   */
+  root?: string;
+  /** Uploads to this server running at once (default 3). */
+  maxParallel?: number;
+  /** When SSH cannot connect, upload over the server's FTP/SFTP instead of failing. */
+  fallbackToFtp?: boolean;
+}
+
+export interface SshTarget {
+  host: string;
+  user: string;
+  port: number;
+  root: string;
+  maxParallel: number;
+  fallbackToFtp: boolean;
+}
 
 /**
  * Optional SQL console settings for a server. When present, the server header
@@ -30,6 +63,10 @@ export interface ServerDefinition {
   password?: string;
   /** Enables the SQL console button for this server. */
   sql?: ServerSqlConfig;
+  /** SSH settings for rsync uploads (protocol "ssh" or uploadVia "ssh"). */
+  ssh?: ServerSshConfig;
+  /** "ssh" — an FTP/SFTP server uploads through rsync over SSH. */
+  uploadVia?: 'ssh';
 }
 
 export interface UploadDefinition {
@@ -64,6 +101,18 @@ export interface UploadDefinition {
    * only what actually changed.
    */
   skipUnchanged?: string[];
+  /**
+   * Glob patterns: skip a file whose sha1 matches the one recorded after the
+   * previous successful full upload (manifest in .vscode/upload-hashes/).
+   * Use for non-hashed build output (html, txt) that rebuilds byte-identical.
+   */
+  skipSameHash?: string[];
+  /** Mirror server scan: 'smart' (default) lists only dirs we deploy to, 'full' walks the whole tree. */
+  mirrorScan?: 'smart' | 'full';
+  /** Extra globs ('dir/**') whose subtrees the mirror scan never lists or deletes. */
+  mirrorScanIgnore?: string[];
+  /** Globs whose dirs are not listed; stale files come from the previous manifest. Default = skipUnchanged. */
+  mirrorTrustHashes?: string[];
   /** Parallel connections for the transfer (1–8, default 4 for ftp/ftps, 2 for sftp). */
   connections?: number;
 }
@@ -83,7 +132,13 @@ export interface ResolvedUpload {
   mode?: 'upload' | 'mirror';
   protectRemote?: string[];
   skipUnchanged?: string[];
+  skipSameHash?: string[];
+  mirrorScan?: 'smart' | 'full';
+  mirrorScanIgnore?: string[];
+  mirrorTrustHashes?: string[];
   connections?: number;
+  /** Set when this upload goes through rsync over SSH. */
+  ssh?: SshTarget;
 }
 
 export interface UploadGroup {
@@ -107,5 +162,7 @@ export interface UploadProgress {
   filesTotal?: number;
   percent?: number;
   speedBps?: number;
+  /** Итог завершённой заливки одной строкой (файлы, МБ, время, скорость). */
+  summary?: string;
   finishedAt?: number;
 }

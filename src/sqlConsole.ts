@@ -175,7 +175,10 @@ export interface QueryOutcome {
  * fixable with a single command, so spell that command out instead of leaving
  * the developer with "Permission denied (publickey,password)".
  */
-function explainSshFailure(target: SqlTarget, message: string): string | null {
+export function explainSshFailure(
+  target: Pick<SqlTarget, 'sshHost' | 'sshUser' | 'sshPort'>,
+  message: string
+): string | null {
   const login = `${target.sshUser}@${target.sshHost}`;
   const port = target.sshPort !== 22 ? ` -p ${target.sshPort}` : '';
 
@@ -195,7 +198,7 @@ function explainSshFailure(target: SqlTarget, message: string): string | null {
     return [
       `Cannot resolve ${target.sshHost}.`,
       '',
-      'Check the host in the server\'s "sql" block (or its sshHost) in server-uploads.local.json.',
+      'Check the host (or the "ssh" / "sql" block\'s sshHost) in server-uploads.local.json.',
     ].join('\n');
   }
 

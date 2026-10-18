@@ -91,6 +91,8 @@ export interface CombinedOpProgress {
    *  so the webview can attach the standard upload progress bar inline. */
   currentUploadKey?: string;
   message?: string;
+  /** Итоги шагов-заливок и общее время (на финальном статусе). */
+  summary?: string;
   finishedAt?: number;
 }
 

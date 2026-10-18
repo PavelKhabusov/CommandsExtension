@@ -1,13 +1,13 @@
 # Server Uploads
 
-Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.json` and run them with one click — no FileZilla CLI required, works on Linux, macOS, and Windows.
+Define per-project FTP / FTPS / SFTP / SSH (rsync) upload targets in `server-uploads.local.json` and run them with one click — no FileZilla CLI required, works on Linux, macOS, and Windows.
 
 - **Live progress** — percentage, current file, transfer speed, files done / total
 - **Cancel mid-flight** — stop button on running uploads
 - **Files, folders, globs** — single files, recursive folder uploads, or glob patterns
 - **Per-upload `exclude`** — skip files inside an uploaded folder (e.g. `**/node_modules/**`)
 - **Parallel transfers** — `"connections": N` opens a pool of FTP/SFTP connections (default 4 / sftp 2); directory creation is cached per deploy
-- **Mirror deploys** — `"mode": "mirror"` deletes remote files that no longer exist locally (full uploads only); `protectRemote` globs and `.htaccess` are never touched
+- **Mirror deploys** — `"mode": "mirror"` deletes remote files that no longer exist locally (full uploads only); `protectRemote` globs and `.htaccess` are never touched; the server scan skips protected subtrees and lists only dirs we deploy to (`mirrorScan`)
 - **`skipUnchanged` globs** — matching files whose remote size equals the local size are skipped (content-hashed builds re-deploy only new chunks)
 - **Modified tracking** — cards show `⚠ N files modified` since the last upload; a per-server "Upload only N modified" action sends just those, and a header ✓ button marks everything synced
 - **Shared `servers`** — define a server once, reference it from many uploads
@@ -50,11 +50,61 @@ Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.jso
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
 | `name` | string | yes | Reference name used by uploads |
-| `protocol` | `"ftp"` \| `"ftps"` \| `"sftp"` | yes | Connection protocol |
+| `protocol` | `"ftp"` \| `"ftps"` \| `"sftp"` \| `"ssh"` | yes | Connection protocol (`ssh` = rsync over SSH by key) |
 | `host` | string | yes | Server hostname or IP |
 | `port` | number | no | Defaults: 21 (FTP/FTPS), 22 (SFTP) |
 | `user` | string | yes | Username |
 | `password` | string | no | Password. If omitted, you'll be prompted at upload time (not saved) |
+| `uploadVia` | `"ssh"` | no | Upload this FTP/SFTP server's uploads through rsync over SSH (see below) |
+| `ssh` | object | no | SSH settings for rsync uploads: `host`, `user`, `port`, `root`, `maxParallel`, `fallbackToFtp` |
+
+## SSH / rsync uploads
+
+FTP sends small files one round-trip at a time (~0.16 MB/s on a far shared host).
+With `"protocol": "ssh"` — or `"uploadVia": "ssh"` on an existing FTP server — uploads
+run through the system `rsync` over SSH with **your own key** (ssh-agent / `~/.ssh`),
+no password in the config. Requirements: `rsync` locally (or set
+`commandsExtension.rsyncPath`) and on the server; key login works (`ssh user@host`).
+
+```json
+{
+  "servers": [
+    {
+      "name": "dev",
+      "protocol": "ftp",
+      "host": "example.beget.tech",
+      "user": "example_dev",
+      "password": "ftp-password",
+      "uploadVia": "ssh",
+      "ssh": { "maxParallel": 3, "fallbackToFtp": false }
+    },
+    {
+      "name": "vps",
+      "protocol": "ssh",
+      "host": "vps.example.com",
+      "user": "deploy",
+      "ssh": { "root": "/var/www/site" }
+    }
+  ]
+}
+```
+
+| `ssh` field | Default | Description |
+|-------------|---------|-------------|
+| `host` / `user` / `port` | `sql.sshHost` / `sql.sshUser` / `sql.sshPort`, then the server's `host` / `user`, port 22 | SSH login |
+| `root` | `"~"` for `uploadVia`, `"/"` for `protocol: "ssh"` | Where `remoteDir` and spec paths start. `"~"` = SSH home (on shared hosting it is usually the FTP root, so FTP paths keep working as is) |
+| `maxParallel` | 3 | Uploads to this server running at once; the rest wait for a slot |
+| `fallbackToFtp` | `false` | When SSH cannot connect, upload over FTP/SFTP instead of failing (otherwise the error explains how to fix SSH) |
+
+Everything else works the same: `items` / `exclude` (resolved locally, one rsync run per
+upload), `mode: "mirror"` + `protectRemote` (one `find` scan that prunes protected `dir/**` subtrees, and a batched `rm` over SSH),
+`onExists: "skip"` (`--ignore-existing`), `skipSameHash` (same manifest in
+`.vscode/upload-hashes/` as FTP, so switching protocols does not re-upload). rsync itself
+skips files whose size and mtime match and sends only changed blocks of the rest, so
+`skipUnchanged` and `connections` are not needed. Quick Upload / specs to such a server go in
+one rsync per server; `del` is `rm -rf` over SSH (missing paths skipped). Progress
+(bytes, %, speed, current file, files) goes to the panel and the hub like FTP; Stop kills rsync.
+File permissions are left to the server defaults, as with FTP.
 
 ## `uploads` entry
 
@@ -72,6 +122,36 @@ Define per-project FTP / FTPS / SFTP upload targets in `server-uploads.local.jso
 | `protectRemote` | string[] | no | Globs (relative to `remoteDir`) the mirror must never delete; `.htaccess` is always protected |
 | `connections` | number 1–8 | no | Parallel connection pool (default 4 for ftp/ftps, 2 for sftp) |
 | `skipUnchanged` | string[] | no | Globs whose files are skipped when remote size equals local size |
+| `mirrorScan` | `"smart"` \| `"full"` | no | How the mirror scans the server (default `"smart"`, see below) |
+| `mirrorScanIgnore` | string[] | no | Extra globs (`"dir/**"` or a dir path) the mirror never lists and never deletes |
+| `mirrorTrustHashes` | string[] | no | Globs (`"dir/**"`) whose dirs are not listed; stale files there are taken from the previous upload manifest (default = `skipUnchanged`, `[]` turns it off) |
+
+### Mirror scan (FTP / SFTP)
+
+Before deleting, the mirror lists the server. Every listing is one round trip, so the
+scan is limited to what matters (`"mirrorScan": "smart"`, default):
+
+- **Protected subtrees are never entered** — a dir covered by a `protectRemote` glob
+  ending in `/**` (`docs/**`, `_next/data/docs/**`) or by `mirrorScanIgnore` is skipped
+  without a `LIST`.
+- **Only our dirs are listed** — `remoteDir` itself, dirs present in the local set and
+  dirs from the previous upload (`.vscode/upload-hashes/<upload>.mirror.json`, plus the
+  `skipSameHash` manifest). A foreign dir found there (not ours, never uploaded) is
+  removed as a whole without listing it first — unless a `protectRemote` glob could
+  match inside it, then it is listed like ours.
+- **Trusted dirs are not listed at all** — under `mirrorTrustHashes` (default:
+  `skipUnchanged`, e.g. `_next/static/**`) stale files are those from the previous
+  manifest that are gone locally; files uploaded there count as unchanged by the
+  `skipSameHash` sha1. Needs both manifests from a previous successful mirror; until
+  then the dirs are listed normally. Files put there by hand are not seen and stay —
+  use `[]` (or `"mirrorScan": "full"`) for such dirs.
+- Dirs are listed in parallel over the `connections` pool, each dir once per run.
+  Progress shows `Scanning server: N dirs / M files`, the final status adds
+  `skipped protected: K dirs, trusted: …, foreign: …`.
+
+`"mirrorScan": "full"` lists the whole tree (protected / ignored subtrees still skipped).
+Over SSH the scan is a single `find` anyway; protected `dir/**` paths are pruned
+(`-prune`) so it does not descend into them.
 
 Folder items follow rsync trailing-slash semantics: `"folder/"` uploads the folder's *contents* into `remoteDir`, `"folder"` keeps the folder name on the server.
 

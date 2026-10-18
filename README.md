@@ -99,7 +99,7 @@ Click **+** in the toolbar to add new commands without touching JSON. Pick an ex
 
 ### Server Uploads
 
-Per-project **FTP / FTPS / SFTP** upload targets in `server-uploads.local.json`, run
+Per-project **FTP / FTPS / SFTP / SSH-rsync** upload targets in `server-uploads.local.json`, run
 with one click — live progress, cancel, mirror deploys, parallel transfers,
 `skipUnchanged`, badge-exact "Modified" uploads, and a Quick Upload for one-off
 files. **[Full reference → docs/server-uploads.md](docs/server-uploads.md).**
@@ -289,6 +289,7 @@ installed (`ssh-copy-id user@host`).
 |---------|---------|-------------|
 | `commandsExtension.configFile` | `commands-list.json` | Path to commands config file (relative to workspace root) |
 | `commandsExtension.uploadsFile` | `server-uploads.local.json` | Path to server uploads config file (relative to workspace root) |
+| `commandsExtension.rsyncPath` | `rsync` | rsync executable for `protocol: "ssh"` / `uploadVia: "ssh"` servers |
 | `commandsExtension.externalApiUrl` | `""` | Optional base URL of an external hub that receives upload / staleness / combined-op events and the merged command list. Empty disables. |
 
 ---
