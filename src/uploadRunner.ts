@@ -196,6 +196,12 @@ function hashManifestPath(workspaceRoot: string, key: string): string {
   return path.join(workspaceRoot, '.vscode', 'upload-hashes', key.replace(/[^\w.-]+/g, '_') + '.json');
 }
 
+function ensureHashDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const ignore = path.join(dir, '.gitignore');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+}
+
 function sha1File(p: string): string | null {
   try { return crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex'); } catch { return null; }
 }
@@ -495,11 +501,11 @@ export class UploadRunner {
         }
       }
       if (hashGlobs.length && !ctrl.signal.aborted && this._lastStatus.get(key)?.status === 'done') {
-        fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
+        ensureHashDir(path.dirname(manifestFile));
         fs.writeFileSync(manifestFile, JSON.stringify(nextHashes));
       }
       if (plan && !ctrl.signal.aborted && this._lastStatus.get(key)?.status === 'done') {
-        fs.mkdirSync(path.dirname(mirrorFile), { recursive: true });
+        ensureHashDir(path.dirname(mirrorFile));
         fs.writeFileSync(mirrorFile, JSON.stringify(Array.from(plan.local)));
       }
       this._onFilesUploaded?.(
