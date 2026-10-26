@@ -1123,6 +1123,14 @@ body {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.uploads-group-login-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
 }
 
 .uploads-group-login {
@@ -1132,6 +1140,7 @@ body {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+	min-width: 0;
 }
 
 .uploads-group-modified {

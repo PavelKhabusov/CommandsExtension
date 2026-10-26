@@ -1423,11 +1423,18 @@
 		// server (the normal case); otherwise leave it to per-card fallback.
 		let login = '';
 		let mixed = false;
+		let proto = '';
+		let protoMixed = false;
 		for (const u of group.uploads) {
 			if (u._unresolved || !u.user || !u.host) continue;
 			const l = u.user + '@' + u.host;
 			if (!login) login = l;
-			else if (login !== l) { mixed = true; break; }
+			else if (login !== l) { mixed = true; }
+			const p = u.protocol || '';
+			if (p) {
+				if (!proto) proto = p;
+				else if (proto !== p) protoMixed = true;
+			}
 		}
 
 		// Name on the first line, login on its own line beneath it.
@@ -1439,7 +1446,19 @@
 		name.className = 'uploads-group-name';
 		name.textContent = hasName ? group.name : (login || group.name || 'Uploads');
 		if (!hasName && login) name.title = login;
-		textCol.appendChild(name);
+
+		if (proto && !protoMixed) {
+			const nameRow = document.createElement('span');
+			nameRow.className = 'uploads-group-login-row';
+			nameRow.appendChild(name);
+			const protoEl = document.createElement('span');
+			protoEl.className = 'upload-proto';
+			protoEl.textContent = proto;
+			nameRow.appendChild(protoEl);
+			textCol.appendChild(nameRow);
+		} else {
+			textCol.appendChild(name);
+		}
 
 		if (login && hasName && !mixed) {
 			const loginEl = document.createElement('span');
@@ -1607,13 +1626,6 @@
 		nameSpan.className = 'upload-name';
 		nameSpan.textContent = upload.name;
 		top.appendChild(nameSpan);
-
-		if (upload.protocol) {
-			const proto = document.createElement('span');
-			proto.className = 'upload-proto';
-			proto.textContent = upload.protocol;
-			top.appendChild(proto);
-		}
 
 		info.appendChild(top);
 
